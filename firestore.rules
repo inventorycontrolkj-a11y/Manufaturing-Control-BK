@@ -1,0 +1,56 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function myRole() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
+    }
+
+    function myPabrik() {
+      return myRole() == 'lkj' ? 'LKJ' : (myRole() == 'jlp' ? 'JLP' : null);
+    }
+
+    // ---- users: setiap user boleh baca semua (untuk cek role di UI admin),
+    // hanya boleh membuat dokumen dirinya sendiri saat daftar,
+    // hanya admin yang boleh mengubah role siapa pun.
+    match /users/{uid} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && request.auth.uid == uid;
+      allow update: if isSignedIn() && myRole() == 'admin';
+    }
+
+    // ---- bmb: hanya lkj/jlp boleh tulis, dan hanya untuk pabrik miliknya sendiri.
+    // semua role yang sudah login boleh baca (dipakai untuk hitung sisa barang).
+    match /bmb/{docId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn()
+        && (myRole() == 'lkj' || myRole() == 'jlp')
+        && request.resource.data.pabrik == myPabrik();
+      allow update, delete: if isSignedIn() && myRole() == 'admin';
+    }
+
+    // ---- deliveryOrders: lkj/jlp boleh buat DO untuk pabrik sendiri.
+    // ekspedisi boleh update field pengiriman (shipped/tanggalKirim) saja secara praktik,
+    // (pembatasan field granular sebaiknya divalidasi lebih lanjut sesuai kebutuhan).
+    match /deliveryOrders/{docId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn()
+        && (myRole() == 'lkj' || myRole() == 'jlp')
+        && request.resource.data.pabrik == myPabrik();
+      allow update: if isSignedIn() && (myRole() == 'ekspedisi' || myRole() == 'admin');
+      allow delete: if isSignedIn() && myRole() == 'admin';
+    }
+
+    // ---- salesOrders: hanya marketing boleh membuat, semua boleh baca.
+    match /salesOrders/{docId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && myRole() == 'marketing';
+      allow update, delete: if isSignedIn() && myRole() == 'admin';
+    }
+  }
+}

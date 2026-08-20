@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sistem Integrasi Pabrik LKJ · JLP · Marketing · Ekspedisi</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- ============== LOGIN ============== -->
+  <div id="login-screen">
+    <div class="login-card">
+      <div class="login-brand"><span class="dot"></span><span>APLIKASI</span></div>
+      <div class="login-sub">Integrasi Pabrik LKJ, Pabrik JLP, Marketing &amp; Team Ekspedisi</div>
+      <div id="login-error" class="login-error"></div>
+      <form id="login-form">
+        <div class="field">
+          <label>Email</label>
+          <input id="email" type="email" required autocomplete="username">
+        </div>
+        <div class="field">
+          <label>Password</label>
+          <input id="password" type="password" required autocomplete="current-password" minlength="6">
+        </div>
+        <button id="submit-btn" class="btn btn-primary" type="submit">Masuk</button>
+      </form>
+      <div class="login-toggle">
+        <button id="mode-toggle" type="button">Belum punya akun? Daftar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============== APP SHELL ============== -->
+  <div id="app-screen">
+    <aside class="sidebar">
+      <div class="sidebar-brand"><span class="dot"></span><span>APLIKASI</span></div>
+      <span id="role-badge" class="role-badge"></span>
+      <nav id="nav-menu" class="menu"></nav>
+      <div class="sidebar-foot">
+        <div id="who" class="who mono"></div>
+        <button id="logout-btn" class="btn btn-danger">Keluar</button>
+      </div>
+    </aside>
+    <main class="main">
+      <div class="topline">
+        <h1 id="view-title"></h1>
+        <span id="clock" class="clock mono"></span>
+      </div>
+      <div id="view-body"></div>
+    </main>
+  </div>
+
+  <div id="toast" class="toast"></div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
