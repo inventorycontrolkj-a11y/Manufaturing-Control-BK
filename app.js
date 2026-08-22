@@ -639,37 +639,270 @@ function renderSisaSO(main) {
 }
 
 // ---------------------------------------------------------------
-// VIEW: Input Sales Order (Marketing)
+// Nomor Sales Order otomatis: format YYMM + urutan 3 digit (global, semua marketing)
+// ---------------------------------------------------------------
+async function nextSONumber() {
+  const now = new Date();
+  const prefix = String(now.getFullYear()).slice(-2) + String(now.getMonth() + 1).padStart(2, "0");
+  const counterRef = doc(db, "counters", `so_${prefix}`);
+  const seq = await runTransaction(db, async (tx) => {
+    const snap = await tx.get(counterRef);
+    const next = (snap.exists() ? snap.data().seq : 0) + 1;
+    tx.set(counterRef, { seq: next, updatedAt: serverTimestamp() });
+    return next;
+  });
+  return prefix + String(seq).padStart(3, "0");
+}
+
+// ---------------------------------------------------------------
+// VIEW: Input Sales Order (Marketing) — banner nomor SO otomatis,
+// tabel multi-barang dengan bonus % & total qty terhitung otomatis.
 // ---------------------------------------------------------------
 function renderInputSO(main) {
-  const c = card("Input Sales Order");
-  const form = document.createElement("form");
-  form.className = "form-grid";
-  form.innerHTML = `
-    <div class="field"><label>Customer</label><select name="customer" required></select></div>
-    <div class="field"><label>Produk</label><select name="produk" required></select></div>
-    <div class="field"><label>Jumlah</label><input name="jumlah" type="number" min="0" step="any" required></div>
-    <div class="field"><label>Tanggal</label><input name="tanggal" type="date" value="${todayStr()}" required></div>
-    <button class="btn btn-primary" type="submit">Simpan SO</button>
+  const wrap = document.createElement("div");
+
+  // --- banner: No. SO otomatis + tanggal ---
+  const banner = document.createElement("div");
+  banner.className = "form-banner";
+  banner.innerHTML = `
+    <div>
+      <div class="fb-title">Sales Order</div>
+      <div class="fb-sub">Input pesanan customer — nomor SO dibuat otomatis saat disimpan</div>
+    </div>
+    <div class="fb-chips">
+      <div class="banner-chip"><div class="label">No. Sales Order</div><div class="val" id="so-no">Memuat...</div></div>
+      <div class="banner-chip"><div class="label">Tanggal SO</div><div class="val" id="so-date-display">${fmtTanggalPanjang(todayStr())}</div></div>
+    </div>
   `;
-  populateMasterSelect(form.customer, "customer", "Pilih customer...");
-  populateMasterSelect(form.produk, "barang", "Pilih produk...");
-  form.addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const f = new FormData(form);
-    try {
-      await addDoc(collection(db, "salesOrders"), {
-        customer: f.get("customer").trim(), produk: f.get("produk").trim(),
-        jumlah: Number(f.get("jumlah")), tanggal: f.get("tanggal"),
-        createdBy: currentUser.email, createdAt: serverTimestamp(),
-      });
-      showToast("Sales Order tersimpan");
-      form.reset();
-      form.tanggal.value = todayStr();
-    } catch (err) { showToast(err.message, "err"); }
+  wrap.appendChild(banner);
+  const soNoEl = banner.querySelector("#so-no");
+  const soDateDisplay = banner.querySelector("#so-date-display");
+  nextSONumber().then(no => { soNoEl.textContent = no; })
+    .catch(err => { soNoEl.textContent = "-"; showToast("Gagal membuat No. SO: " + err.message, "err"); });
+
+  // --- info utama: customer, tanggal, batas kirim ---
+  const infoCard = card("");
+  infoCard.querySelector("h2").remove();
+  const infoForm = document.createElement("div");
+  infoForm.className = "form-grid";
+  infoForm.innerHTML = `
+    <div class="field"><label>Customer</label><select name="customer" required></select></div>
+    <div class="field"><label>Tanggal SO</label><input name="tanggal" type="date" value="${todayStr()}" required></div>
+    <div class="field"><label>Batas Kirim (opsional)</label><input name="batasKirim" type="date"></div>
+  `;
+  infoCard.appendChild(infoForm);
+  wrap.appendChild(infoCard);
+  populateMasterSelect(infoForm.customer, "customer", "Pilih customer...");
+  infoForm.tanggal.addEventListener("change", () => {
+    soDateDisplay.textContent = fmtTanggalPanjang(infoForm.tanggal.value);
   });
-  c.appendChild(form);
-  main.appendChild(c);
+
+  // --- lookup harga & berat dari data master barang ---
+  let barangMap = {};
+  listenCollection("masterBarang", [], (rows) => {
+    barangMap = {};
+    rows.forEach(r => { barangMap[r.nama] = r; });
+  });
+
+  // --- tabel daftar barang ---
+  const itemCard = card("");
+  itemCard.querySelector("h2").remove();
+  const toolbar = document.createElement("div");
+  toolbar.className = "item-toolbar";
+  toolbar.innerHTML = `<h2 style="margin:0;text-transform:none;font-size:15px;color:var(--text);">📦 Daftar Barang</h2>`;
+  const addRowBtn = document.createElement("button");
+  addRowBtn.type = "button";
+  addRowBtn.className = "btn btn-primary btn-add-row";
+  addRowBtn.textContent = "+ Tambah Barang";
+  toolbar.appendChild(addRowBtn);
+  itemCard.appendChild(toolbar);
+
+  const tableWrap = document.createElement("div");
+  tableWrap.className = "item-table-wrap";
+  tableWrap.innerHTML = `<table>
+    <thead><tr>
+      <th style="width:34px;">No</th>
+      <th style="min-width:170px;">Nama Barang</th>
+      <th style="width:110px;">Harga/Pack</th>
+      <th style="width:100px;">Qty Order</th>
+      <th style="width:90px;">Bonus (%)</th>
+      <th style="width:90px;">Qty Bonus</th>
+      <th style="width:90px;">Total Qty</th>
+      <th style="min-width:140px;">Keterangan</th>
+      <th style="width:40px;"></th>
+    </tr></thead>
+    <tbody></tbody>
+  </table>`;
+  itemCard.appendChild(tableWrap);
+  const tbody = tableWrap.querySelector("tbody");
+
+  const hint = document.createElement("div");
+  hint.className = "hint";
+  hint.textContent = "ℹ️ Qty Bonus dihitung otomatis dari persentase bonus × qty order. Total Qty = Qty Order + Qty Bonus.";
+  itemCard.appendChild(hint);
+  wrap.appendChild(itemCard);
+
+  function calcRow(tr) {
+    const produk = tr.querySelector("select[name=produk]").value;
+    const qtyOrder = Number(tr.querySelector("input[name=qtyOrder]").value) || 0;
+    const bonusPct = Number(tr.querySelector("input[name=bonusPct]").value) || 0;
+    const qtyBonus = Math.round(qtyOrder * bonusPct / 100);
+    const totalQty = qtyOrder + qtyBonus;
+    tr.querySelector(".cell-qty-bonus").textContent = fmtNum(qtyBonus);
+    tr.querySelector(".cell-total-qty").textContent = fmtNum(totalQty);
+    // auto-isi harga dari data master kalau field harga masih kosong & barang dipilih
+    const hargaInput = tr.querySelector("input[name=harga]");
+    if (produk && !hargaInput.dataset.touched && barangMap[produk] && barangMap[produk].harga) {
+      hargaInput.value = barangMap[produk].harga;
+    }
+    updateSummary();
+  }
+
+  function addItemRow() {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td class="num row-index">${tbody.children.length + 1}</td>
+      <td><select name="produk"></select></td>
+      <td><input name="harga" placeholder="opsional"></td>
+      <td><input name="qtyOrder" type="number" min="0" step="any" placeholder="0"></td>
+      <td><input name="bonusPct" type="number" min="0" step="any" placeholder="0"></td>
+      <td class="num cell-qty-bonus">0</td>
+      <td class="num cell-total-qty">0</td>
+      <td><input name="keterangan" placeholder="Catatan (opsional)"></td>
+      <td><button type="button" class="btn btn-danger row-del-btn">✕</button></td>
+    `;
+    const select = tr.querySelector("select[name=produk]");
+    populateMasterSelect(select, "barang", "Pilih barang...");
+    select.addEventListener("change", () => calcRow(tr));
+    tr.querySelector("input[name=qtyOrder]").addEventListener("input", () => calcRow(tr));
+    tr.querySelector("input[name=bonusPct]").addEventListener("input", () => calcRow(tr));
+    tr.querySelector("input[name=harga]").addEventListener("input", (e) => { e.target.dataset.touched = "1"; updateSummary(); });
+    tr.querySelector(".row-del-btn").addEventListener("click", () => {
+      tr.remove();
+      renumberItemRows();
+      updateSummary();
+    });
+    tbody.appendChild(tr);
+  }
+  function renumberItemRows() {
+    [...tbody.children].forEach((tr, i) => { tr.querySelector(".row-index").textContent = i + 1; });
+  }
+  addRowBtn.addEventListener("click", addItemRow);
+  addItemRow();
+
+  // --- catatan + ringkasan total ---
+  const bottomWrap = document.createElement("div");
+  bottomWrap.className = "two-col";
+  const noteCard = card("📝 Catatan Sales Order");
+  const noteTextarea = document.createElement("textarea");
+  noteTextarea.className = "textarea-note";
+  noteTextarea.placeholder = "Tulis catatan tambahan untuk sales order ini (opsional)...";
+  noteCard.appendChild(noteTextarea);
+
+  const summaryCardOuter = document.createElement("div");
+  summaryCardOuter.innerHTML = `
+    <div class="card summary-panel">
+      <div class="sp-item"><div class="label">Total Item</div><div class="val" id="sp-total-item">0</div></div>
+      <div class="sp-item"><div class="label">Total Qty</div><div class="val" id="sp-total-qty">0</div></div>
+      <div class="sp-item"><div class="label">Estimasi Tonase</div><div class="val" id="sp-total-tonase">0 kg</div></div>
+    </div>
+  `;
+  bottomWrap.appendChild(noteCard);
+  bottomWrap.appendChild(summaryCardOuter);
+  wrap.appendChild(bottomWrap);
+
+  function updateSummary() {
+    let totalItem = 0, totalQty = 0, totalTonase = 0;
+    [...tbody.children].forEach(tr => {
+      const produk = tr.querySelector("select[name=produk]").value;
+      const qtyOrder = Number(tr.querySelector("input[name=qtyOrder]").value) || 0;
+      const bonusPct = Number(tr.querySelector("input[name=bonusPct]").value) || 0;
+      const totalQtyRow = qtyOrder + Math.round(qtyOrder * bonusPct / 100);
+      if (produk && qtyOrder > 0) {
+        totalItem++;
+        totalQty += totalQtyRow;
+        const berat = barangMap[produk] ? Number(barangMap[produk].beratPack) || 0 : 0;
+        totalTonase += berat * totalQtyRow;
+      }
+    });
+    summaryCardOuter.querySelector("#sp-total-item").textContent = fmtNum(totalItem);
+    summaryCardOuter.querySelector("#sp-total-qty").textContent = fmtNum(totalQty);
+    summaryCardOuter.querySelector("#sp-total-tonase").textContent = fmtNum(Math.round(totalTonase)) + " kg";
+  }
+  updateSummary();
+
+  // --- tombol Reset & Simpan Data ---
+  const actions = document.createElement("div");
+  actions.className = "form-actions";
+  actions.innerHTML = `
+    <button type="button" class="btn" id="btn-reset-so">↺ Reset</button>
+    <button type="button" class="btn btn-primary" id="btn-save-so">🔒 Simpan Data</button>
+  `;
+  wrap.appendChild(actions);
+  main.appendChild(wrap);
+
+  actions.querySelector("#btn-reset-so").addEventListener("click", () => {
+    infoForm.reset();
+    infoForm.tanggal.value = todayStr();
+    soDateDisplay.textContent = fmtTanggalPanjang(todayStr());
+    tbody.innerHTML = "";
+    addItemRow();
+    noteTextarea.value = "";
+    updateSummary();
+  });
+
+  actions.querySelector("#btn-save-so").addEventListener("click", async () => {
+    const customer = infoForm.customer.value;
+    const tanggal = infoForm.tanggal.value;
+    const batasKirim = infoForm.batasKirim.value || "";
+    if (!customer) { showToast("Pilih customer dulu", "err"); return; }
+    if (!tanggal) { showToast("Isi tanggal dulu", "err"); return; }
+
+    const items = [...tbody.children].map(tr => {
+      const produk = tr.querySelector("select[name=produk]").value;
+      const qtyOrder = Number(tr.querySelector("input[name=qtyOrder]").value) || 0;
+      const bonusPct = Number(tr.querySelector("input[name=bonusPct]").value) || 0;
+      const qtyBonus = Math.round(qtyOrder * bonusPct / 100);
+      return {
+        produk, harga: tr.querySelector("input[name=harga]").value || "",
+        qtyOrder, bonusPct, qtyBonus, totalQty: qtyOrder + qtyBonus,
+        keteranganItem: tr.querySelector("input[name=keterangan]").value || "",
+      };
+    }).filter(it => it.produk && it.qtyOrder > 0);
+
+    if (!items.length) { showToast("Isi minimal satu barang dengan qty order", "err"); return; }
+
+    const btn = actions.querySelector("#btn-save-so");
+    btn.disabled = true; btn.textContent = "Menyimpan...";
+    try {
+      const noSO = soNoEl.textContent;
+      await Promise.all(items.map(it => addDoc(collection(db, "salesOrders"), {
+        noSO, customer, tanggal, batasKirim,
+        catatan: noteTextarea.value || "",
+        produk: it.produk, harga: it.harga,
+        qtyOrder: it.qtyOrder, bonusPct: it.bonusPct, qtyBonus: it.qtyBonus,
+        jumlah: it.totalQty, // dipakai perhitungan Sisa SO / Sisa Barang
+        keteranganItem: it.keteranganItem,
+        createdBy: currentUser.email, createdAt: serverTimestamp(),
+      })));
+      showToast(`Sales Order ${noSO} tersimpan (${items.length} item)`);
+      actions.querySelector("#btn-reset-so").click();
+      soNoEl.textContent = "Memuat...";
+      nextSONumber().then(no => { soNoEl.textContent = no; });
+    } catch (err) {
+      showToast(err.message, "err");
+    } finally {
+      btn.disabled = false; btn.textContent = "🔒 Simpan Data";
+    }
+  });
+}
+
+function fmtTanggalPanjang(isoDate) {
+  if (!isoDate) return "-";
+  const bulan = ["Januari","Februari","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"];
+  const [y, m, d] = isoDate.split("-").map(Number);
+  if (!y || !m || !d) return isoDate;
+  return `${d} ${bulan[m - 1]} ${y}`;
 }
 
 // ---------------------------------------------------------------
@@ -678,6 +911,7 @@ function renderInputSO(main) {
 function renderRekapSO(main) {
   const c = card("Rekap Sales Order");
   const holder = document.createElement("div");
+  holder.style.overflowX = "auto";
   c.appendChild(holder);
   main.appendChild(c);
 
@@ -688,7 +922,7 @@ function renderRekapSO(main) {
     holder.innerHTML = "";
     const sorted = [...soRows].sort((a, b) => (b.tanggal || "").localeCompare(a.tanggal || ""));
     holder.appendChild(makeTable(
-      ["Tanggal", "Customer", "Produk", "Jumlah Order", "Status"],
+      ["No. SO", "Tanggal", "Customer", "Produk", "Qty Order", "Bonus %", "Total Qty", "Batas Kirim", "Status"],
       sorted,
       (r) => {
         const totalKirimProduk = kirimByProduk[r.produk] || 0;
@@ -696,8 +930,11 @@ function renderRekapSO(main) {
           ? `<span class="badge badge-ok">Terpenuhi</span>`
           : `<span class="badge badge-wait">Diproses</span>`;
         const tr = document.createElement("tr");
-        tr.innerHTML = `<td>${r.tanggal}</td><td>${r.customer}</td><td>${r.produk}</td>
-          <td class="num">${fmtNum(r.jumlah)}</td><td>${status}</td>`;
+        tr.innerHTML = `<td class="mono">${r.noSO || "-"}</td><td>${r.tanggal}</td><td>${r.customer}</td><td>${r.produk}</td>
+          <td class="num">${fmtNum(r.qtyOrder !== undefined ? r.qtyOrder : r.jumlah)}</td>
+          <td class="num">${r.bonusPct !== undefined ? r.bonusPct + "%" : "-"}</td>
+          <td class="num">${fmtNum(r.jumlah)}</td>
+          <td>${r.batasKirim || "-"}</td><td>${status}</td>`;
         return tr;
       }
     ));
