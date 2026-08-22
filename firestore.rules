@@ -52,5 +52,22 @@ service cloud.firestore {
       allow create: if isSignedIn() && myRole() == 'marketing';
       allow update, delete: if isSignedIn() && myRole() == 'admin';
     }
+
+    // ---- data master (nama barang / angkutan / customer):
+    // semua user yang login boleh baca (dipakai untuk dropdown di form),
+    // hanya admin yang boleh menambah/menghapus.
+    match /masterBarang/{docId} {
+      allow read: if isSignedIn();
+      allow create, delete: if isSignedIn() && myRole() == 'admin';
+    }
+    match /masterAngkutan/{docId} {
+      allow read: if isSignedIn();
+      allow create, delete: if isSignedIn() && myRole() == 'admin';
+    }
+    match /masterCustomer/{docId} {
+      allow read: if isSignedIn();
+      allow create, delete: if isSignedIn() && myRole() == 'admin';
+    }
   }
 }
+
