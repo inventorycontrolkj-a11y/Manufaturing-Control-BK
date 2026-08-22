@@ -670,12 +670,45 @@ function renderMasterData(main) {
   renderMasterTab(body, activeKey);
 }
 
+// Kolom spesifikasi khusus untuk data master Barang (selain "nama")
+const BARANG_SPEC_COLS = [
+  { key: "kw", label: "KW" },
+  { key: "ukuran", label: "Ukuran" },
+  { key: "isi", label: "Isi" },
+  { key: "beratPack", label: "Berat/Pack" },
+  { key: "beratEkspedisi", label: "Berat Ekspedisi" },
+  { key: "harga", label: "Harga Satuan/Pack" },
+  { key: "perIkat", label: "Per Ikat" },
+  { key: "perBall", label: "Per Ball" },
+];
+
+function normalizeHeader(h) {
+  return String(h || "").toUpperCase().replace(/[\r\n]+/g, " ").replace(/\s+/g, " ").trim();
+}
+function findColumn(headers, patterns) {
+  for (const h of headers) {
+    const norm = normalizeHeader(h);
+    if (patterns.some(p => norm.includes(p))) return h;
+  }
+  return null;
+}
+
 function renderMasterTab(body, masterKey) {
   clearListeners(); // hentikan listener tab sebelumnya
-  const { collection: colName, label } = MASTER_LISTS[masterKey];
   body.innerHTML = "";
+  if (masterKey === "barang") {
+    renderMasterBarangTab(body);
+  } else {
+    renderMasterSimpleTab(body, masterKey);
+  }
+}
 
-  // --- form tambah satu-satu + import massal ---
+// ---------------------------------------------------------------
+// Tab sederhana: Angkutan & Customer (nama saja + import satu per baris)
+// ---------------------------------------------------------------
+function renderMasterSimpleTab(body, masterKey) {
+  const { collection: colName, label } = MASTER_LISTS[masterKey];
+
   const formWrap = document.createElement("div");
   formWrap.className = "form-grid";
   formWrap.style.marginBottom = "18px";
@@ -704,7 +737,6 @@ Pasir Cor" style="width:100%;padding:10px 12px;background:var(--panel-2);border:
     } catch (err) { showToast(err.message, "err"); }
   });
 
-  // --- daftar data yang sudah ada, dengan tombol hapus ---
   const listHolder = document.createElement("div");
   body.appendChild(listHolder);
 
@@ -720,25 +752,185 @@ Pasir Cor" style="width:100%;padding:10px 12px;background:var(--panel-2);border:
         const tdBy = document.createElement("td");
         tdBy.textContent = r.createdBy || "-";
         const tdAction = document.createElement("td");
-        const delBtn = document.createElement("button");
-        delBtn.className = "btn btn-danger";
-        delBtn.style.padding = "5px 10px";
-        delBtn.style.fontSize = "12px";
-        delBtn.textContent = "Hapus";
-        delBtn.addEventListener("click", async () => {
-          if (!confirm(`Hapus "${r.nama}" dari daftar ${label}?`)) return;
-          try {
-            await deleteDoc(doc(db, colName, r.id));
-            showToast(`${r.nama} dihapus`);
-          } catch (err) { showToast(err.message, "err"); }
-        });
-        tdAction.appendChild(delBtn);
+        tdAction.appendChild(makeDeleteBtn(colName, r.id, r.nama, label));
         tr.appendChild(tdNama); tr.appendChild(tdBy); tr.appendChild(tdAction);
         return tr;
       },
       `Belum ada data ${label}`
     ));
   });
+}
+
+// ---------------------------------------------------------------
+// Tab Barang: nama + spesifikasi lengkap, plus import dari Excel
+// ---------------------------------------------------------------
+function renderMasterBarangTab(body) {
+  const colName = MASTER_LISTS.barang.collection;
+
+  // --- Import dari Excel ---
+  const excelCard = document.createElement("div");
+  excelCard.style.marginBottom = "18px";
+  excelCard.innerHTML = `
+    <label style="display:block;font-size:12px;color:var(--text-dim);margin-bottom:6px;text-transform:uppercase;letter-spacing:0.5px;">
+      Import dari Excel (.xlsx / .xls)
+    </label>
+    <div class="hint" style="margin-bottom:8px;">
+      Kolom yang dikenali otomatis: Singkatan (nama), KW, Ukuran, Isi, Berat/Pack, Berat Ekspedisi, Harga Satuan/Pack, Per Ikat, Per Ball. Baris pertama harus judul kolom.
+    </div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+      <input type="file" id="excel-file" accept=".xlsx,.xls" style="color:var(--text-dim);font-size:13px;">
+      <button class="btn btn-primary" type="button" id="btn-excel-import" style="width:auto;padding:9px 18px;">Import Excel</button>
+    </div>
+    <div id="excel-status" class="hint" style="margin-top:8px;"></div>
+  `;
+  body.appendChild(excelCard);
+
+  excelCard.querySelector("#btn-excel-import").addEventListener("click", () => {
+    const fileInput = excelCard.querySelector("#excel-file");
+    const statusEl = excelCard.querySelector("#excel-status");
+    const file = fileInput.files[0];
+    if (!file) { showToast("Pilih file Excel dulu", "err"); return; }
+    if (typeof XLSX === "undefined") {
+      showToast("Library Excel belum termuat, refresh halaman dan coba lagi", "err");
+      return;
+    }
+    statusEl.textContent = "Membaca file...";
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+      try {
+        const wb = XLSX.read(new Uint8Array(e.target.result), { type: "array" });
+        const sheet = wb.Sheets[wb.SheetNames[0]];
+        const rows = XLSX.utils.sheet_to_json(sheet, { defval: "" });
+        if (!rows.length) { statusEl.textContent = "File kosong atau format tidak terbaca."; return; }
+
+        const headers = Object.keys(rows[0]);
+        const colMap = {
+          nama: findColumn(headers, ["SINGKATAN"]),
+          kw: findColumn(headers, ["KW"]),
+          ukuran: findColumn(headers, ["UKURAN"]),
+          isi: findColumn(headers, ["ISI"]),
+          beratPack: findColumn(headers, ["BERAT/PACK", "BERAT PACK"]),
+          beratEkspedisi: findColumn(headers, ["BERAT EKSPEDISI"]),
+          harga: findColumn(headers, ["HARGA"]),
+          perIkat: findColumn(headers, ["PER IKAT"]),
+          perBall: findColumn(headers, ["PER BALL"]),
+        };
+        if (!colMap.nama) {
+          statusEl.textContent = "Kolom 'SINGKATAN' tidak ditemukan di file ini — import dibatalkan.";
+          return;
+        }
+
+        const docs = rows
+          .map(r => ({
+            nama: String(r[colMap.nama] || "").trim(),
+            kw: colMap.kw ? r[colMap.kw] : "",
+            ukuran: colMap.ukuran ? r[colMap.ukuran] : "",
+            isi: colMap.isi ? r[colMap.isi] : "",
+            beratPack: colMap.beratPack ? r[colMap.beratPack] : "",
+            beratEkspedisi: colMap.beratEkspedisi ? r[colMap.beratEkspedisi] : "",
+            harga: colMap.harga ? r[colMap.harga] : "",
+            perIkat: colMap.perIkat ? r[colMap.perIkat] : "",
+            perBall: colMap.perBall ? r[colMap.perBall] : "",
+          }))
+          .filter(d => d.nama);
+
+        if (!docs.length) { statusEl.textContent = "Tidak ada baris dengan nama barang yang valid."; return; }
+
+        statusEl.textContent = `Mengimpor ${docs.length} barang...`;
+        await Promise.all(docs.map(d =>
+          addDoc(collection(db, colName), { ...d, createdBy: currentUser.email, createdAt: serverTimestamp() })
+        ));
+        statusEl.textContent = `Berhasil import ${docs.length} barang.`;
+        showToast(`${docs.length} barang berhasil diimport`);
+        fileInput.value = "";
+      } catch (err) {
+        statusEl.textContent = "Gagal membaca file: " + err.message;
+        showToast("Import gagal: " + err.message, "err");
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  });
+
+  // --- Tambah manual satu barang ---
+  const manualForm = document.createElement("form");
+  manualForm.className = "form-grid";
+  manualForm.style.marginBottom = "18px";
+  manualForm.innerHTML = `
+    <div class="field"><label>Nama / Singkatan</label><input name="nama" required></div>
+    <div class="field"><label>KW</label><input name="kw"></div>
+    <div class="field"><label>Ukuran</label><input name="ukuran"></div>
+    <div class="field"><label>Isi</label><input name="isi"></div>
+    <div class="field"><label>Berat/Pack</label><input name="beratPack"></div>
+    <div class="field"><label>Berat Ekspedisi</label><input name="beratEkspedisi"></div>
+    <div class="field"><label>Harga Satuan/Pack</label><input name="harga"></div>
+    <div class="field"><label>Per Ikat</label><input name="perIkat"></div>
+    <div class="field"><label>Per Ball</label><input name="perBall"></div>
+    <button class="btn btn-primary" type="submit">Tambah Barang</button>
+  `;
+  body.appendChild(manualForm);
+
+  manualForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const f = new FormData(manualForm);
+    const nama = f.get("nama").trim();
+    if (!nama) return;
+    try {
+      await addDoc(collection(db, colName), {
+        nama,
+        kw: f.get("kw") || "", ukuran: f.get("ukuran") || "", isi: f.get("isi") || "",
+        beratPack: f.get("beratPack") || "", beratEkspedisi: f.get("beratEkspedisi") || "",
+        harga: f.get("harga") || "", perIkat: f.get("perIkat") || "", perBall: f.get("perBall") || "",
+        createdBy: currentUser.email, createdAt: serverTimestamp(),
+      });
+      showToast("Barang tersimpan");
+      manualForm.reset();
+    } catch (err) { showToast(err.message, "err"); }
+  });
+
+  // --- Daftar barang ---
+  const listHolder = document.createElement("div");
+  body.appendChild(listHolder);
+
+  listenCollection(colName, [orderBy("nama")], (rows) => {
+    listHolder.innerHTML = "";
+    const headers = ["Nama", ...BARANG_SPEC_COLS.map(c => c.label), ""];
+    listHolder.appendChild(makeTable(
+      headers, rows,
+      (r) => {
+        const tr = document.createElement("tr");
+        const tdNama = document.createElement("td");
+        tdNama.textContent = r.nama;
+        tr.appendChild(tdNama);
+        BARANG_SPEC_COLS.forEach(c => {
+          const td = document.createElement("td");
+          td.className = "num";
+          td.textContent = (r[c.key] === undefined || r[c.key] === "") ? "-" : r[c.key];
+          tr.appendChild(td);
+        });
+        const tdAction = document.createElement("td");
+        tdAction.appendChild(makeDeleteBtn(colName, r.id, r.nama, "barang"));
+        tr.appendChild(tdAction);
+        return tr;
+      },
+      "Belum ada data barang"
+    ));
+  });
+}
+
+function makeDeleteBtn(colName, id, nama, label) {
+  const delBtn = document.createElement("button");
+  delBtn.className = "btn btn-danger";
+  delBtn.style.padding = "5px 10px";
+  delBtn.style.fontSize = "12px";
+  delBtn.textContent = "Hapus";
+  delBtn.addEventListener("click", async () => {
+    if (!confirm(`Hapus "${nama}" dari daftar ${label}?`)) return;
+    try {
+      await deleteDoc(doc(db, colName, id));
+      showToast(`${nama} dihapus`);
+    } catch (err) { showToast(err.message, "err"); }
+  });
+  return delBtn;
 }
 
 const RENDERERS = {
