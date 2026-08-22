@@ -68,6 +68,12 @@ service cloud.firestore {
       allow read: if isSignedIn();
       allow create, delete: if isSignedIn() && myRole() == 'admin';
     }
+
+    // ---- counters: dipakai untuk generate No. BMB otomatis (mis. counters/bmb_LKJ_2608).
+    // lkj/jlp boleh baca & tulis (increment) counter miliknya sendiri.
+    match /counters/{counterId} {
+      allow read, write: if isSignedIn() && (myRole() == 'lkj' || myRole() == 'jlp' || myRole() == 'admin');
+    }
   }
 }
 
