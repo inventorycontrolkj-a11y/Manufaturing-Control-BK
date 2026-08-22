@@ -6,7 +6,7 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
 import {
   getFirestore, collection, addDoc, doc, getDoc, setDoc, updateDoc, deleteDoc,
-  onSnapshot, query, where, orderBy, serverTimestamp
+  onSnapshot, query, where, orderBy, serverTimestamp, runTransaction
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 
 const app = initializeApp(firebaseConfig);
@@ -282,38 +282,167 @@ function statCard(label, value, sub, colorVar) {
 }
 
 // ---------------------------------------------------------------
-// VIEW: Input BMB (LKJ / JLP)
+// Nomor BMB otomatis: format YYMM + urutan 3 digit, per pabrik per bulan
+// (mis. 2608001 = tahun 2026, bulan 08, urutan ke-1)
+// ---------------------------------------------------------------
+async function nextBMBNumber(pabrik) {
+  const now = new Date();
+  const prefix = String(now.getFullYear()).slice(-2) + String(now.getMonth() + 1).padStart(2, "0");
+  const counterRef = doc(db, "counters", `bmb_${pabrik}_${prefix}`);
+  const seq = await runTransaction(db, async (tx) => {
+    const snap = await tx.get(counterRef);
+    const next = (snap.exists() ? snap.data().seq : 0) + 1;
+    tx.set(counterRef, { seq: next, updatedAt: serverTimestamp() });
+    return next;
+  });
+  return prefix + String(seq).padStart(3, "0");
+}
+
+// ---------------------------------------------------------------
+// VIEW: Input BMB (LKJ / JLP) — form multi-baris ala kertas FORM BMB,
+// dengan No. BMB otomatis dan Stock Saat Ini / Stock + BMB terisi sendiri.
 // ---------------------------------------------------------------
 function renderInputBMB(main) {
   const pabrik = ROLES[currentRole].pabrik;
-  const c = card(`Input BMB — Pabrik ${pabrik}`);
-  const form = document.createElement("form");
-  form.className = "form-grid";
-  form.innerHTML = `
-    <div class="field"><label>Produk</label><select name="produk" required></select></div>
-    <div class="field"><label>Jumlah</label><input name="jumlah" type="number" min="0" step="any" required></div>
+  const c = card(`Form BMB — Pabrik ${pabrik}`);
+
+  // --- header: No. BMB (otomatis) & Tanggal ---
+  const header = document.createElement("div");
+  header.className = "form-grid";
+  header.style.marginBottom = "18px";
+  header.innerHTML = `
+    <div class="field"><label>No. BMB</label><input name="noBMB" class="mono" value="Memuat..." disabled></div>
     <div class="field"><label>Tanggal</label><input name="tanggal" type="date" value="${todayStr()}" required></div>
-    <div class="field"><label>Keterangan</label><input name="keterangan" placeholder="opsional"></div>
-    <button class="btn btn-primary" type="submit">Simpan</button>
   `;
-  populateMasterSelect(form.produk, "barang", "Pilih produk...");
-  form.addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const f = new FormData(form);
-    try {
-      await addDoc(collection(db, "bmb"), {
-        pabrik, produk: f.get("produk").trim(),
-        jumlah: Number(f.get("jumlah")),
-        tanggal: f.get("tanggal"),
-        keterangan: f.get("keterangan") || "",
-        createdBy: currentUser.email, createdAt: serverTimestamp(),
-      });
-      showToast("Data BMB tersimpan");
-      form.reset();
-      form.tanggal.value = todayStr();
-    } catch (err) { showToast(err.message, "err"); }
+  c.appendChild(header);
+  const noBMBInput = header.querySelector("input[name=noBMB]");
+  const tanggalInput = header.querySelector("input[name=tanggal]");
+
+  nextBMBNumber(pabrik).then(no => { noBMBInput.value = no; })
+    .catch(err => { noBMBInput.value = "-"; showToast("Gagal membuat No. BMB: " + err.message, "err"); });
+
+  // --- stok saat ini, dihitung live dari data BMB & DO pabrik ini ---
+  let stockMap = {}; // produk -> sisa stok saat ini
+  listenCollection("bmb", [where("pabrik", "==", pabrik)], (rows) => {
+    recomputeStock(rows, "in"); refreshAllRows();
   });
-  c.appendChild(form);
+  listenCollection("deliveryOrders", [where("pabrik", "==", pabrik)], (rows) => {
+    recomputeStock(rows, "out"); refreshAllRows();
+  });
+  let masukRows = [], keluarRows = [];
+  function recomputeStock(rows, kind) {
+    if (kind === "in") masukRows = rows; else keluarRows = rows;
+    const map = {};
+    masukRows.forEach(r => { map[r.produk] = (map[r.produk] || 0) + (Number(r.jumlah) || 0); });
+    keluarRows.forEach(r => { map[r.produk] = (map[r.produk] || 0) - (Number(r.jumlah) || 0); });
+    stockMap = map;
+  }
+
+  // --- tabel baris input ---
+  const table = document.createElement("table");
+  table.innerHTML = `<thead><tr>
+      <th style="width:36px;">No</th>
+      <th>Nama Barang</th>
+      <th style="width:120px;">Qty BMB</th>
+      <th style="width:130px;">Stock Saat Ini</th>
+      <th style="width:130px;">Stock + BMB</th>
+      <th style="width:40px;"></th>
+    </tr></thead><tbody></tbody>`;
+  const tbody = table.querySelector("tbody");
+  c.appendChild(table);
+
+  function refreshAllRows() {
+    tbody.querySelectorAll("tr").forEach(updateRowCalc);
+  }
+
+  function updateRowCalc(tr) {
+    const select = tr.querySelector("select[name=produk]");
+    const qtyInput = tr.querySelector("input[name=qty]");
+    const stokCell = tr.querySelector(".cell-stok-saat-ini");
+    const stokBaruCell = tr.querySelector(".cell-stok-baru");
+    const produk = select.value;
+    const qty = Number(qtyInput.value) || 0;
+    const stokSaatIni = produk ? (stockMap[produk] || 0) : null;
+    stokCell.textContent = produk ? fmtNum(stokSaatIni) : "-";
+    stokBaruCell.textContent = produk ? fmtNum(stokSaatIni + qty) : "-";
+  }
+
+  function addRow() {
+    const tr = document.createElement("tr");
+    const rowNo = tbody.children.length + 1;
+    tr.innerHTML = `
+      <td class="num">${rowNo}</td>
+      <td><select name="produk" style="width:100%;"></select></td>
+      <td><input name="qty" type="number" min="0" step="any" placeholder="0" style="width:100%;"></td>
+      <td class="num cell-stok-saat-ini">-</td>
+      <td class="num cell-stok-baru">-</td>
+      <td><button type="button" class="btn btn-danger" style="padding:5px 8px;font-size:12px;">✕</button></td>
+    `;
+    const select = tr.querySelector("select[name=produk]");
+    populateMasterSelect(select, "barang", "Pilih...");
+    select.addEventListener("change", () => updateRowCalc(tr));
+    tr.querySelector("input[name=qty]").addEventListener("input", () => updateRowCalc(tr));
+    tr.querySelector("button").addEventListener("click", () => {
+      tr.remove();
+      renumberRows();
+    });
+    tbody.appendChild(tr);
+  }
+
+  function renumberRows() {
+    [...tbody.children].forEach((tr, i) => { tr.querySelector("td.num").textContent = i + 1; });
+  }
+
+  for (let i = 0; i < 6; i++) addRow();
+
+  const addRowBtn = document.createElement("button");
+  addRowBtn.type = "button";
+  addRowBtn.className = "btn";
+  addRowBtn.style.cssText = "width:auto;padding:8px 16px;margin-top:12px;";
+  addRowBtn.textContent = "+ Tambah Baris";
+  addRowBtn.addEventListener("click", addRow);
+  c.appendChild(addRowBtn);
+
+  // --- simpan semua baris yang terisi ---
+  const saveBtn = document.createElement("button");
+  saveBtn.type = "button";
+  saveBtn.className = "btn btn-primary";
+  saveBtn.style.cssText = "width:auto;padding:11px 28px;margin-top:20px;display:block;";
+  saveBtn.textContent = "Simpan Data";
+  saveBtn.addEventListener("click", async () => {
+    const noBMB = noBMBInput.value;
+    const tanggal = tanggalInput.value;
+    if (!tanggal) { showToast("Isi tanggal dulu", "err"); return; }
+    const entries = [...tbody.children].map(tr => ({
+      produk: tr.querySelector("select[name=produk]").value,
+      qty: Number(tr.querySelector("input[name=qty]").value) || 0,
+    })).filter(e => e.produk && e.qty > 0);
+
+    if (!entries.length) { showToast("Isi minimal satu baris (produk & qty)", "err"); return; }
+
+    saveBtn.disabled = true; saveBtn.textContent = "Menyimpan...";
+    try {
+      await Promise.all(entries.map(e => addDoc(collection(db, "bmb"), {
+        pabrik, produk: e.produk, jumlah: e.qty, tanggal, noBMB,
+        stockSaatInput: stockMap[e.produk] || 0,
+        stockSetelahBMB: (stockMap[e.produk] || 0) + e.qty,
+        createdBy: currentUser.email, createdAt: serverTimestamp(),
+      })));
+      showToast(`Form BMB ${noBMB} tersimpan (${entries.length} item)`);
+      // reset: nomor baru, tanggal hari ini, tabel kosong lagi
+      tbody.innerHTML = "";
+      for (let i = 0; i < 6; i++) addRow();
+      tanggalInput.value = todayStr();
+      noBMBInput.value = "Memuat...";
+      nextBMBNumber(pabrik).then(no => { noBMBInput.value = no; });
+    } catch (err) {
+      showToast(err.message, "err");
+    } finally {
+      saveBtn.disabled = false; saveBtn.textContent = "Simpan Data";
+    }
+  });
+  c.appendChild(saveBtn);
+
   main.appendChild(c);
 }
 
@@ -331,12 +460,15 @@ function renderRekapBMB(main) {
     (rows) => {
       holder.innerHTML = "";
       holder.appendChild(makeTable(
-        ["Tanggal", "Produk", "Jumlah", "Keterangan", "Input Oleh"],
+        ["No. BMB", "Tanggal", "Produk", "Qty BMB", "Stock Saat Input", "Stock + BMB", "Input Oleh"],
         rows,
         (r) => {
           const tr = document.createElement("tr");
-          tr.innerHTML = `<td>${r.tanggal}</td><td>${r.produk}</td>
-            <td class="num">${fmtNum(r.jumlah)}</td><td>${r.keterangan || "-"}</td><td>${r.createdBy}</td>`;
+          tr.innerHTML = `<td class="mono">${r.noBMB || "-"}</td><td>${r.tanggal}</td><td>${r.produk}</td>
+            <td class="num">${fmtNum(r.jumlah)}</td>
+            <td class="num">${r.stockSaatInput !== undefined ? fmtNum(r.stockSaatInput) : "-"}</td>
+            <td class="num">${r.stockSetelahBMB !== undefined ? fmtNum(r.stockSetelahBMB) : "-"}</td>
+            <td>${r.createdBy}</td>`;
           return tr;
         }
       ));
