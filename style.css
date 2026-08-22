@@ -9,8 +9,8 @@
   --text-dim:#6B7A72;
   --accent:#16A34A;
   --accent-dark:#0F7D38;
-  --lkj:#2563EB;
-  --jlp:#16A34A;
+  --lkj:#16A34A;
+  --jlp:#2563EB;
   --marketing:#D97706;
   --ekspedisi:#7C3AED;
   --danger:#DC2626;
@@ -369,3 +369,33 @@ textarea.textarea-note{
   .sidebar-foot{display:none;}
   .main{padding:18px;}
 }
+
+/* ---------- Aksen warna khusus per pabrik ----------
+   Secara default aplikasi memakai hijau (--accent) sebagai warna utama tombol,
+   banner, dan kepala tabel. Untuk role Pabrik JLP, elemen-elemen itu memakai
+   biru (--jlp) supaya kedua pabrik mudah dibedakan sekilas. LKJ tidak perlu
+   override karena hijau adalah warna default aplikasi. Background tetap putih. */
+body[data-role="jlp"] .topline{
+  background:linear-gradient(120deg, color-mix(in srgb, var(--jlp) 82%, black), var(--jlp));
+}
+body[data-role="jlp"] .btn-primary{background:var(--jlp);border-color:var(--jlp);}
+body[data-role="jlp"] .btn-primary:hover{
+  background:color-mix(in srgb, var(--jlp) 82%, black);
+  border-color:color-mix(in srgb, var(--jlp) 82%, black);
+}
+body[data-role="jlp"] thead th{background:var(--jlp);}
+body[data-role="jlp"] .btn-outline-accent{border-color:var(--jlp);color:var(--jlp);}
+body[data-role="jlp"] .btn-outline-accent:hover{background:color-mix(in srgb, var(--jlp) 8%, transparent);}
+body[data-role="jlp"] .summary-panel{
+  background:color-mix(in srgb, var(--jlp) 6%, transparent);
+  border-color:color-mix(in srgb, var(--jlp) 30%, transparent);
+}
+body[data-role="jlp"] .summary-panel .sp-item .val{color:var(--jlp);}
+body[data-role="jlp"] .field input:focus, body[data-role="jlp"] .field select:focus{
+  border-color:var(--jlp);box-shadow:0 0 0 3px color-mix(in srgb, var(--jlp) 12%, transparent);
+}
+body[data-role="jlp"] table td select:focus, body[data-role="jlp"] table td input:focus,
+body[data-role="jlp"] .item-table-wrap select:focus, body[data-role="jlp"] .item-table-wrap input:focus{
+  border-color:var(--jlp);box-shadow:0 0 0 3px color-mix(in srgb, var(--jlp) 10%, transparent);
+}
+body[data-role="jlp"] .header-icon-box{background:var(--jlp);}
