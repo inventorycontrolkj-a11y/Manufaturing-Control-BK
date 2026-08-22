@@ -657,6 +657,88 @@ function renderStockOpname(main) {
   listenCollection("bmb", [where("pabrik", "==", pabrik)], (rows) => { bmbRows = rows; recomputeSystemStock(); });
   listenCollection("deliveryOrders", [where("pabrik", "==", pabrik)], (rows) => { doRows = rows; recomputeSystemStock(); });
 
+  // --- Import dari Excel ---
+  const excelCard = document.createElement("div");
+  excelCard.style.marginBottom = "18px";
+  excelCard.innerHTML = `
+    <label style="display:block;font-size:12px;color:var(--text-dim);margin-bottom:6px;text-transform:uppercase;letter-spacing:0.5px;">
+      Import Hasil Opname dari Excel (.xlsx / .xls)
+    </label>
+    <div class="hint" style="margin-bottom:8px;">
+      Kolom yang dikenali otomatis: Nama Barang, Stock Fisik. Tanggal opname memakai tanggal yang diisi di atas untuk semua baris di file ini. Baris pertama harus judul kolom.
+    </div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+      <input type="file" id="opname-excel-file" accept=".xlsx,.xls" style="color:var(--text-dim);font-size:13px;">
+      <button type="button" class="btn btn-primary" id="btn-opname-excel-import" style="width:auto;padding:9px 18px;">${ICONS.save} Import Excel</button>
+    </div>
+    <div id="opname-excel-status" class="hint" style="margin-top:8px;"></div>
+  `;
+  c.appendChild(excelCard);
+  c.appendChild(Object.assign(document.createElement("hr"), { className: "divider" }));
+
+  excelCard.querySelector("#btn-opname-excel-import").addEventListener("click", () => {
+    const fileInput = excelCard.querySelector("#opname-excel-file");
+    const statusEl = excelCard.querySelector("#opname-excel-status");
+    const tanggalOpname = tanggalInput.value;
+    const file = fileInput.files[0];
+    if (!tanggalOpname) { showToast("Isi tanggal opname dulu", "err"); return; }
+    if (!file) { showToast("Pilih file Excel dulu", "err"); return; }
+    if (typeof XLSX === "undefined") {
+      showToast("Library Excel belum termuat, refresh halaman dan coba lagi", "err");
+      return;
+    }
+    statusEl.textContent = "Membaca file...";
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+      try {
+        const wb = XLSX.read(new Uint8Array(e.target.result), { type: "array" });
+        const sheet = wb.Sheets[wb.SheetNames[0]];
+        const rows = XLSX.utils.sheet_to_json(sheet, { defval: "" });
+        if (!rows.length) { statusEl.textContent = "File kosong atau format tidak terbaca."; return; }
+
+        const headers = Object.keys(rows[0]);
+        const namaCol = findColumn(headers, ["NAMA BARANG", "SINGKATAN", "BARANG", "NAMA"]);
+        const fisikCol = findColumn(headers, ["STOCK FISIK", "STOK FISIK", "QTY", "JUMLAH"]);
+        if (!namaCol || !fisikCol) {
+          statusEl.textContent = "Kolom 'Nama Barang' dan/atau 'Stock Fisik' tidak ditemukan di file ini — import dibatalkan.";
+          return;
+        }
+
+        const docs = rows
+          .map(r => ({
+            produk: String(r[namaCol] || "").trim(),
+            fisik: Number(r[fisikCol]),
+          }))
+          .filter(d => d.produk && !isNaN(d.fisik));
+
+        if (!docs.length) { statusEl.textContent = "Tidak ada baris dengan nama barang & stock fisik yang valid."; return; }
+
+        statusEl.textContent = `Mengimpor ${docs.length} data opname...`;
+        await Promise.all(docs.map(d => {
+          const sistem = systemStockMap[d.produk] || 0;
+          return addDoc(collection(db, "stockOpname"), {
+            pabrik, produk: d.produk, tanggalOpname,
+            stockAwal: d.fisik, stockSistemSebelum: sistem, selisih: d.fisik - sistem,
+            createdBy: currentUser.email, createdAt: serverTimestamp(),
+          });
+        }));
+        statusEl.textContent = `Berhasil import ${docs.length} data opname.`;
+        showToast(`${docs.length} hasil Stock Opname berhasil diimport`);
+        fileInput.value = "";
+      } catch (err) {
+        statusEl.textContent = "Gagal membaca file: " + err.message;
+        showToast("Import gagal: " + err.message, "err");
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  });
+
+  const manualLabel = document.createElement("div");
+  manualLabel.className = "hint";
+  manualLabel.style.marginBottom = "10px";
+  manualLabel.textContent = "Atau isi manual per barang di tabel berikut:";
+  c.appendChild(manualLabel);
+
   const tableWrap = document.createElement("div");
   tableWrap.className = "table-bordered-wrap";
   const table = document.createElement("table");
