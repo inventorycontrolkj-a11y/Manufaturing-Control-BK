@@ -342,12 +342,13 @@ function renderInputBMB(main) {
   const table = document.createElement("table");
   table.innerHTML = `<thead><tr>
       <th style="width:36px;">No</th>
-      <th>Nama Barang</th>
+      <th style="width:280px;max-width:280px;">Nama Barang</th>
       <th style="width:120px;">Qty BMB</th>
       <th style="width:130px;">Stock Saat Ini</th>
       <th style="width:130px;">Stock + BMB</th>
       <th style="width:40px;"></th>
     </tr></thead><tbody></tbody>`;
+  table.style.tableLayout = "fixed";
   const tbody = table.querySelector("tbody");
   c.appendChild(table);
 
