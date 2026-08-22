@@ -5,7 +5,7 @@ import {
   createUserWithEmailAndPassword, signOut
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
 import {
-  getFirestore, collection, addDoc, doc, getDoc, setDoc, updateDoc,
+  getFirestore, collection, addDoc, doc, getDoc, setDoc, updateDoc, deleteDoc,
   onSnapshot, query, where, orderBy, serverTimestamp
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 
@@ -26,7 +26,7 @@ const ROLES = {
   ekspedisi:  { label: "Team Ekspedisi",  color: "--ekspedisi",
                 menu: ["input-nodo","rekap-do"] },
   admin:      { label: "Admin",           color: "--danger",
-                menu: ["manage-users"] },
+                menu: ["manage-users","master-data"] },
 };
 
 const VIEW_TITLES = {
@@ -35,6 +35,14 @@ const VIEW_TITLES = {
   "sisa-so": "Sisa Sales Order", "sisa-barang": "Sisa Barang",
   "input-so": "Input Sales Order", "rekap-so": "Rekap Sales Order",
   "input-nodo": "Input Nomor DO", "manage-users": "Kelola User & Akses",
+  "master-data": "Data Master (Barang · Angkutan · Customer)",
+};
+
+// Koleksi data master & label tampilannya
+const MASTER_LISTS = {
+  barang:    { collection: "masterBarang",    label: "Nama Barang" },
+  angkutan:  { collection: "masterAngkutan",  label: "Nama Angkutan" },
+  customer:  { collection: "masterCustomer",  label: "Nama Customer" },
 };
 
 let currentUser = null;
@@ -192,6 +200,31 @@ function listenCollection(colName, constraints, cb) {
 }
 
 // ---------------------------------------------------------------
+// Isi <select> dari salah satu daftar data master (barang/angkutan/customer),
+// realtime — otomatis update kalau admin menambah/menghapus data master.
+// ---------------------------------------------------------------
+function populateMasterSelect(selectEl, masterKey, placeholder) {
+  const { collection: colName } = MASTER_LISTS[masterKey];
+  listenCollection(colName, [orderBy("nama")], (rows) => {
+    const current = selectEl.value;
+    selectEl.innerHTML = `<option value="" disabled ${!current ? "selected" : ""}>${placeholder}</option>`;
+    if (!rows.length) {
+      const opt = document.createElement("option");
+      opt.value = ""; opt.disabled = true;
+      opt.textContent = "Belum ada data — minta admin tambahkan di menu Data Master";
+      selectEl.appendChild(opt);
+      return;
+    }
+    rows.forEach(r => {
+      const opt = document.createElement("option");
+      opt.value = r.nama; opt.textContent = r.nama;
+      if (r.nama === current) opt.selected = true;
+      selectEl.appendChild(opt);
+    });
+  });
+}
+
+// ---------------------------------------------------------------
 // Komponen UI generik
 // ---------------------------------------------------------------
 function card(title) {
@@ -230,12 +263,13 @@ function renderInputBMB(main) {
   const form = document.createElement("form");
   form.className = "form-grid";
   form.innerHTML = `
-    <div class="field"><label>Produk</label><input name="produk" required placeholder="mis. Semen 40kg"></div>
+    <div class="field"><label>Produk</label><select name="produk" required></select></div>
     <div class="field"><label>Jumlah</label><input name="jumlah" type="number" min="0" step="any" required></div>
     <div class="field"><label>Tanggal</label><input name="tanggal" type="date" value="${todayStr()}" required></div>
     <div class="field"><label>Keterangan</label><input name="keterangan" placeholder="opsional"></div>
     <button class="btn btn-primary" type="submit">Simpan</button>
   `;
+  populateMasterSelect(form.produk, "barang", "Pilih produk...");
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
     const f = new FormData(form);
@@ -292,12 +326,13 @@ function renderInputDO(main) {
   form.className = "form-grid";
   form.innerHTML = `
     <div class="field"><label>No. DO</label><input name="noDO" required placeholder="mis. DO-0001"></div>
-    <div class="field"><label>Produk</label><input name="produk" required></div>
+    <div class="field"><label>Produk</label><select name="produk" required></select></div>
     <div class="field"><label>Jumlah</label><input name="jumlah" type="number" min="0" step="any" required></div>
     <div class="field"><label>Tanggal</label><input name="tanggal" type="date" value="${todayStr()}" required></div>
     <div class="field"><label>No. Sales Order (opsional)</label><input name="salesOrderRef" placeholder="referensi SO"></div>
     <button class="btn btn-primary" type="submit">Simpan DO</button>
   `;
+  populateMasterSelect(form.produk, "barang", "Pilih produk...");
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
     const f = new FormData(form);
@@ -336,7 +371,7 @@ function renderRekapDO(main) {
   listenCollection("deliveryOrders", constraints, (rows) => {
     holder.innerHTML = "";
     const headers = isEkspedisi
-      ? ["No. DO", "Pabrik", "Produk", "Jumlah", "Tanggal", "Status Kirim"]
+      ? ["No. DO", "Pabrik", "Produk", "Jumlah", "Tanggal", "Angkutan", "Status Kirim"]
       : ["No. DO", "Produk", "Jumlah", "Tanggal", "Ref. SO", "Status Kirim"];
     holder.appendChild(makeTable(headers, rows, (r) => {
       const tr = document.createElement("tr");
@@ -345,7 +380,7 @@ function renderRekapDO(main) {
         : `<span class="badge badge-wait">Menunggu</span>`;
       if (isEkspedisi) {
         tr.innerHTML = `<td>${r.noDO}</td><td>${r.pabrik}</td><td>${r.produk}</td>
-          <td class="num">${fmtNum(r.jumlah)}</td><td>${r.tanggal}</td><td>${statusBadge}</td>`;
+          <td class="num">${fmtNum(r.jumlah)}</td><td>${r.tanggal}</td><td>${r.angkutan || "-"}</td><td>${statusBadge}</td>`;
       } else {
         tr.innerHTML = `<td>${r.noDO}</td><td>${r.produk}</td>
           <td class="num">${fmtNum(r.jumlah)}</td><td>${r.tanggal}</td>
@@ -452,12 +487,14 @@ function renderInputSO(main) {
   const form = document.createElement("form");
   form.className = "form-grid";
   form.innerHTML = `
-    <div class="field"><label>Customer</label><input name="customer" required></div>
-    <div class="field"><label>Produk</label><input name="produk" required></div>
+    <div class="field"><label>Customer</label><select name="customer" required></select></div>
+    <div class="field"><label>Produk</label><select name="produk" required></select></div>
     <div class="field"><label>Jumlah</label><input name="jumlah" type="number" min="0" step="any" required></div>
     <div class="field"><label>Tanggal</label><input name="tanggal" type="date" value="${todayStr()}" required></div>
     <button class="btn btn-primary" type="submit">Simpan SO</button>
   `;
+  populateMasterSelect(form.customer, "customer", "Pilih customer...");
+  populateMasterSelect(form.produk, "barang", "Pilih produk...");
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
     const f = new FormData(form);
@@ -519,9 +556,11 @@ function renderInputNoDO(main) {
   form.className = "form-grid";
   form.innerHTML = `
     <div class="field"><label>No. DO</label><input name="noDO" required placeholder="mis. DO-0001"></div>
+    <div class="field"><label>Angkutan</label><select name="angkutan"></select></div>
     <div class="field"><label>Tanggal Kirim</label><input name="tanggalKirim" type="date" value="${todayStr()}" required></div>
     <button class="btn btn-primary" type="submit">Tandai Dikirim</button>
   `;
+  populateMasterSelect(form.angkutan, "angkutan", "Pilih angkutan (opsional)...");
   const resultBox = document.createElement("div");
   resultBox.className = "hint";
   c.appendChild(form);
@@ -544,6 +583,7 @@ function renderInputNoDO(main) {
     try {
       await updateDoc(doc(db, "deliveryOrders", match.id), {
         shipped: true, tanggalKirim: f.get("tanggalKirim"),
+        angkutan: f.get("angkutan") || "",
         confirmedBy: currentUser.email,
       });
       resultBox.textContent = `DO ${noDO} (${match.pabrik}, ${match.produk}, ${match.jumlah}) berhasil ditandai dikirim.`;
@@ -599,6 +639,108 @@ function renderManageUsers(main) {
   });
 }
 
+// ---------------------------------------------------------------
+// VIEW: Data Master — Barang / Angkutan / Customer (Admin)
+// ---------------------------------------------------------------
+function renderMasterData(main) {
+  const c = card("Data Master");
+  const tabs = document.createElement("div");
+  tabs.className = "select-inline";
+  const body = document.createElement("div");
+
+  const keys = Object.keys(MASTER_LISTS); // barang, angkutan, customer
+  let activeKey = keys[0];
+
+  keys.forEach(k => {
+    const btn = document.createElement("button");
+    btn.textContent = MASTER_LISTS[k].label;
+    btn.dataset.key = k;
+    btn.className = k === activeKey ? "active" : "";
+    btn.addEventListener("click", () => {
+      activeKey = k;
+      tabs.querySelectorAll("button").forEach(b => b.classList.toggle("active", b.dataset.key === k));
+      renderMasterTab(body, k);
+    });
+    tabs.appendChild(btn);
+  });
+
+  c.appendChild(tabs);
+  c.appendChild(body);
+  main.appendChild(c);
+  renderMasterTab(body, activeKey);
+}
+
+function renderMasterTab(body, masterKey) {
+  clearListeners(); // hentikan listener tab sebelumnya
+  const { collection: colName, label } = MASTER_LISTS[masterKey];
+  body.innerHTML = "";
+
+  // --- form tambah satu-satu + import massal ---
+  const formWrap = document.createElement("div");
+  formWrap.className = "form-grid";
+  formWrap.style.marginBottom = "18px";
+  formWrap.innerHTML = `
+    <div class="field" style="grid-column:1/-1">
+      <label>Tambah ${label} (satu per baris untuk import banyak sekaligus)</label>
+      <textarea name="bulk" rows="3" placeholder="Contoh:
+Semen 40kg
+Semen 50kg
+Pasir Cor" style="width:100%;padding:10px 12px;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px;font-family:inherit;resize:vertical;"></textarea>
+    </div>
+    <button class="btn btn-primary" type="button" id="btn-import">Simpan / Import</button>
+  `;
+  body.appendChild(formWrap);
+
+  formWrap.querySelector("#btn-import").addEventListener("click", async () => {
+    const raw = formWrap.querySelector("textarea[name=bulk]").value;
+    const names = raw.split("\n").map(s => s.trim()).filter(Boolean);
+    if (!names.length) { showToast("Isi dulu minimal satu nama", "err"); return; }
+    try {
+      await Promise.all(names.map(nama =>
+        addDoc(collection(db, colName), { nama, createdBy: currentUser.email, createdAt: serverTimestamp() })
+      ));
+      showToast(`${names.length} ${label} tersimpan`);
+      formWrap.querySelector("textarea[name=bulk]").value = "";
+    } catch (err) { showToast(err.message, "err"); }
+  });
+
+  // --- daftar data yang sudah ada, dengan tombol hapus ---
+  const listHolder = document.createElement("div");
+  body.appendChild(listHolder);
+
+  listenCollection(colName, [orderBy("nama")], (rows) => {
+    listHolder.innerHTML = "";
+    listHolder.appendChild(makeTable(
+      [label, "Ditambahkan Oleh", ""],
+      rows,
+      (r) => {
+        const tr = document.createElement("tr");
+        const tdNama = document.createElement("td");
+        tdNama.textContent = r.nama;
+        const tdBy = document.createElement("td");
+        tdBy.textContent = r.createdBy || "-";
+        const tdAction = document.createElement("td");
+        const delBtn = document.createElement("button");
+        delBtn.className = "btn btn-danger";
+        delBtn.style.padding = "5px 10px";
+        delBtn.style.fontSize = "12px";
+        delBtn.textContent = "Hapus";
+        delBtn.addEventListener("click", async () => {
+          if (!confirm(`Hapus "${r.nama}" dari daftar ${label}?`)) return;
+          try {
+            await deleteDoc(doc(db, colName, r.id));
+            showToast(`${r.nama} dihapus`);
+          } catch (err) { showToast(err.message, "err"); }
+        });
+        tdAction.appendChild(delBtn);
+        tr.appendChild(tdNama); tr.appendChild(tdBy); tr.appendChild(tdAction);
+        return tr;
+      },
+      `Belum ada data ${label}`
+    ));
+  });
+}
+
 const RENDERERS = {
   "input-bmb": renderInputBMB,
   "rekap-bmb": renderRekapBMB,
@@ -610,6 +752,7 @@ const RENDERERS = {
   "rekap-so": renderRekapSO,
   "input-nodo": renderInputNoDO,
   "manage-users": renderManageUsers,
+  "master-data": renderMasterData,
 };
 
 // ---------------------------------------------------------------
