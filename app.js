@@ -361,6 +361,8 @@ function renderInputBMB(main) {
   }
 
   // --- tabel baris input ---
+  const tableWrap = document.createElement("div");
+  tableWrap.className = "table-bordered-wrap";
   const table = document.createElement("table");
   table.innerHTML = `<thead><tr>
       <th style="width:36px;">No</th>
@@ -372,7 +374,8 @@ function renderInputBMB(main) {
     </tr></thead><tbody></tbody>`;
   table.style.tableLayout = "fixed";
   const tbody = table.querySelector("tbody");
-  c.appendChild(table);
+  tableWrap.appendChild(table);
+  c.appendChild(tableWrap);
 
   function refreshAllRows() {
     tbody.querySelectorAll("tr").forEach(updateRowCalc);
