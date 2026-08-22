@@ -38,11 +38,36 @@ const VIEW_TITLES = {
   "master-data": "Data Master (Barang · Angkutan · Customer)",
 };
 
-// Koleksi data master & label tampilannya
+// Koleksi data master & definisi kolomnya (dipakai untuk import Excel, form manual, dan tabel)
 const MASTER_LISTS = {
-  barang:    { collection: "masterBarang",    label: "Nama Barang" },
-  angkutan:  { collection: "masterAngkutan",  label: "Nama Angkutan" },
-  customer:  { collection: "masterCustomer",  label: "Nama Customer" },
+  barang: {
+    collection: "masterBarang", label: "Nama Barang",
+    namaPatterns: ["SINGKATAN"],
+    specCols: [
+      { key: "kw", label: "KW", patterns: ["KW"] },
+      { key: "ukuran", label: "Ukuran", patterns: ["UKURAN"] },
+      { key: "isi", label: "Isi", patterns: ["ISI"] },
+      { key: "beratPack", label: "Berat/Pack", patterns: ["BERAT/PACK", "BERAT PACK"] },
+      { key: "beratEkspedisi", label: "Berat Ekspedisi", patterns: ["BERAT EKSPEDISI"] },
+      { key: "harga", label: "Harga Satuan/Pack", patterns: ["HARGA"] },
+      { key: "perIkat", label: "Per Ikat", patterns: ["PER IKAT"] },
+      { key: "perBall", label: "Per Ball", patterns: ["PER BALL"] },
+    ],
+  },
+  angkutan: {
+    collection: "masterAngkutan", label: "Nama Angkutan",
+    namaPatterns: ["NAMA PERUSAHAAN", "PERUSAHAAN ANGKUTAN", "NAMA ANGKUTAN"],
+    specCols: [
+      { key: "tujuan", label: "Tujuan", patterns: ["TUJUAN"] },
+      { key: "harga", label: "Harga", patterns: ["HARGA"] },
+      { key: "ongkosKuli", label: "Ongkos Kuli", patterns: ["ONGKOS KULI", "ONGKOS"] },
+    ],
+  },
+  customer: {
+    collection: "masterCustomer", label: "Nama Customer",
+    namaPatterns: ["CUSTOMER", "NAMA CUSTOMER"],
+    specCols: [],
+  },
 };
 
 let currentUser = null;
@@ -207,18 +232,20 @@ function populateMasterSelect(selectEl, masterKey, placeholder) {
   const { collection: colName } = MASTER_LISTS[masterKey];
   listenCollection(colName, [orderBy("nama")], (rows) => {
     const current = selectEl.value;
+    // dedupe nama (mis. data Angkutan bisa punya nama sama untuk tujuan berbeda-beda)
+    const uniqueNames = [...new Set(rows.map(r => r.nama).filter(Boolean))];
     selectEl.innerHTML = `<option value="" disabled ${!current ? "selected" : ""}>${placeholder}</option>`;
-    if (!rows.length) {
+    if (!uniqueNames.length) {
       const opt = document.createElement("option");
       opt.value = ""; opt.disabled = true;
       opt.textContent = "Belum ada data — minta admin tambahkan di menu Data Master";
       selectEl.appendChild(opt);
       return;
     }
-    rows.forEach(r => {
+    uniqueNames.forEach(nama => {
       const opt = document.createElement("option");
-      opt.value = r.nama; opt.textContent = r.nama;
-      if (r.nama === current) opt.selected = true;
+      opt.value = nama; opt.textContent = nama;
+      if (nama === current) opt.selected = true;
       selectEl.appendChild(opt);
     });
   });
@@ -670,18 +697,6 @@ function renderMasterData(main) {
   renderMasterTab(body, activeKey);
 }
 
-// Kolom spesifikasi khusus untuk data master Barang (selain "nama")
-const BARANG_SPEC_COLS = [
-  { key: "kw", label: "KW" },
-  { key: "ukuran", label: "Ukuran" },
-  { key: "isi", label: "Isi" },
-  { key: "beratPack", label: "Berat/Pack" },
-  { key: "beratEkspedisi", label: "Berat Ekspedisi" },
-  { key: "harga", label: "Harga Satuan/Pack" },
-  { key: "perIkat", label: "Per Ikat" },
-  { key: "perBall", label: "Per Ball" },
-];
-
 function normalizeHeader(h) {
   return String(h || "").toUpperCase().replace(/[\r\n]+/g, " ").replace(/\s+/g, " ").trim();
 }
@@ -693,89 +708,27 @@ function findColumn(headers, patterns) {
   return null;
 }
 
+// ---------------------------------------------------------------
+// Tab Data Master generik: dipakai untuk Barang, Angkutan, dan Customer.
+// Perbedaan kolom antar jenis diatur lewat MASTER_LISTS[masterKey].
+// ---------------------------------------------------------------
 function renderMasterTab(body, masterKey) {
   clearListeners(); // hentikan listener tab sebelumnya
   body.innerHTML = "";
-  if (masterKey === "barang") {
-    renderMasterBarangTab(body);
-  } else {
-    renderMasterSimpleTab(body, masterKey);
-  }
-}
+  const cfg = MASTER_LISTS[masterKey];
+  const colName = cfg.collection;
+  const hasSpec = cfg.specCols.length > 0;
 
-// ---------------------------------------------------------------
-// Tab sederhana: Angkutan & Customer (nama saja + import satu per baris)
-// ---------------------------------------------------------------
-function renderMasterSimpleTab(body, masterKey) {
-  const { collection: colName, label } = MASTER_LISTS[masterKey];
-
-  const formWrap = document.createElement("div");
-  formWrap.className = "form-grid";
-  formWrap.style.marginBottom = "18px";
-  formWrap.innerHTML = `
-    <div class="field" style="grid-column:1/-1">
-      <label>Tambah ${label} (satu per baris untuk import banyak sekaligus)</label>
-      <textarea name="bulk" rows="3" placeholder="Contoh:
-Semen 40kg
-Semen 50kg
-Pasir Cor" style="width:100%;padding:10px 12px;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px;font-family:inherit;resize:vertical;"></textarea>
-    </div>
-    <button class="btn btn-primary" type="button" id="btn-import">Simpan / Import</button>
-  `;
-  body.appendChild(formWrap);
-
-  formWrap.querySelector("#btn-import").addEventListener("click", async () => {
-    const raw = formWrap.querySelector("textarea[name=bulk]").value;
-    const names = raw.split("\n").map(s => s.trim()).filter(Boolean);
-    if (!names.length) { showToast("Isi dulu minimal satu nama", "err"); return; }
-    try {
-      await Promise.all(names.map(nama =>
-        addDoc(collection(db, colName), { nama, createdBy: currentUser.email, createdAt: serverTimestamp() })
-      ));
-      showToast(`${names.length} ${label} tersimpan`);
-      formWrap.querySelector("textarea[name=bulk]").value = "";
-    } catch (err) { showToast(err.message, "err"); }
-  });
-
-  const listHolder = document.createElement("div");
-  body.appendChild(listHolder);
-
-  listenCollection(colName, [orderBy("nama")], (rows) => {
-    listHolder.innerHTML = "";
-    listHolder.appendChild(makeTable(
-      [label, "Ditambahkan Oleh", ""],
-      rows,
-      (r) => {
-        const tr = document.createElement("tr");
-        const tdNama = document.createElement("td");
-        tdNama.textContent = r.nama;
-        const tdBy = document.createElement("td");
-        tdBy.textContent = r.createdBy || "-";
-        const tdAction = document.createElement("td");
-        tdAction.appendChild(makeDeleteBtn(colName, r.id, r.nama, label));
-        tr.appendChild(tdNama); tr.appendChild(tdBy); tr.appendChild(tdAction);
-        return tr;
-      },
-      `Belum ada data ${label}`
-    ));
-  });
-}
-
-// ---------------------------------------------------------------
-// Tab Barang: nama + spesifikasi lengkap, plus import dari Excel
-// ---------------------------------------------------------------
-function renderMasterBarangTab(body) {
-  const colName = MASTER_LISTS.barang.collection;
-
-  // --- Import dari Excel ---
+  // ---- Import dari Excel ----
   const excelCard = document.createElement("div");
   excelCard.style.marginBottom = "18px";
+  const kolomInfo = [cfg.label, ...cfg.specCols.map(c => c.label)].join(", ");
   excelCard.innerHTML = `
     <label style="display:block;font-size:12px;color:var(--text-dim);margin-bottom:6px;text-transform:uppercase;letter-spacing:0.5px;">
       Import dari Excel (.xlsx / .xls)
     </label>
     <div class="hint" style="margin-bottom:8px;">
-      Kolom yang dikenali otomatis: Singkatan (nama), KW, Ukuran, Isi, Berat/Pack, Berat Ekspedisi, Harga Satuan/Pack, Per Ikat, Per Ball. Baris pertama harus judul kolom.
+      Kolom yang dikenali otomatis: ${kolomInfo}. Baris pertama harus judul kolom.
     </div>
     <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
       <input type="file" id="excel-file" accept=".xlsx,.xls" style="color:var(--text-dim);font-size:13px;">
@@ -804,44 +757,29 @@ function renderMasterBarangTab(body) {
         if (!rows.length) { statusEl.textContent = "File kosong atau format tidak terbaca."; return; }
 
         const headers = Object.keys(rows[0]);
-        const colMap = {
-          nama: findColumn(headers, ["SINGKATAN"]),
-          kw: findColumn(headers, ["KW"]),
-          ukuran: findColumn(headers, ["UKURAN"]),
-          isi: findColumn(headers, ["ISI"]),
-          beratPack: findColumn(headers, ["BERAT/PACK", "BERAT PACK"]),
-          beratEkspedisi: findColumn(headers, ["BERAT EKSPEDISI"]),
-          harga: findColumn(headers, ["HARGA"]),
-          perIkat: findColumn(headers, ["PER IKAT"]),
-          perBall: findColumn(headers, ["PER BALL"]),
-        };
-        if (!colMap.nama) {
-          statusEl.textContent = "Kolom 'SINGKATAN' tidak ditemukan di file ini — import dibatalkan.";
+        const namaCol = findColumn(headers, cfg.namaPatterns);
+        if (!namaCol) {
+          statusEl.textContent = `Kolom untuk "${cfg.label}" tidak ditemukan di file ini — import dibatalkan.`;
           return;
         }
+        const specColMap = cfg.specCols.map(c => ({ ...c, sourceCol: findColumn(headers, c.patterns) }));
 
         const docs = rows
-          .map(r => ({
-            nama: String(r[colMap.nama] || "").trim(),
-            kw: colMap.kw ? r[colMap.kw] : "",
-            ukuran: colMap.ukuran ? r[colMap.ukuran] : "",
-            isi: colMap.isi ? r[colMap.isi] : "",
-            beratPack: colMap.beratPack ? r[colMap.beratPack] : "",
-            beratEkspedisi: colMap.beratEkspedisi ? r[colMap.beratEkspedisi] : "",
-            harga: colMap.harga ? r[colMap.harga] : "",
-            perIkat: colMap.perIkat ? r[colMap.perIkat] : "",
-            perBall: colMap.perBall ? r[colMap.perBall] : "",
-          }))
+          .map(r => {
+            const d = { nama: String(r[namaCol] || "").trim() };
+            specColMap.forEach(c => { d[c.key] = c.sourceCol ? r[c.sourceCol] : ""; });
+            return d;
+          })
           .filter(d => d.nama);
 
-        if (!docs.length) { statusEl.textContent = "Tidak ada baris dengan nama barang yang valid."; return; }
+        if (!docs.length) { statusEl.textContent = `Tidak ada baris dengan ${cfg.label.toLowerCase()} yang valid.`; return; }
 
-        statusEl.textContent = `Mengimpor ${docs.length} barang...`;
+        statusEl.textContent = `Mengimpor ${docs.length} data...`;
         await Promise.all(docs.map(d =>
           addDoc(collection(db, colName), { ...d, createdBy: currentUser.email, createdAt: serverTimestamp() })
         ));
-        statusEl.textContent = `Berhasil import ${docs.length} barang.`;
-        showToast(`${docs.length} barang berhasil diimport`);
+        statusEl.textContent = `Berhasil import ${docs.length} data.`;
+        showToast(`${docs.length} ${cfg.label} berhasil diimport`);
         fileInput.value = "";
       } catch (err) {
         statusEl.textContent = "Gagal membaca file: " + err.message;
@@ -851,22 +789,14 @@ function renderMasterBarangTab(body) {
     reader.readAsArrayBuffer(file);
   });
 
-  // --- Tambah manual satu barang ---
+  // ---- Tambah manual satu-satu ----
   const manualForm = document.createElement("form");
   manualForm.className = "form-grid";
   manualForm.style.marginBottom = "18px";
-  manualForm.innerHTML = `
-    <div class="field"><label>Nama / Singkatan</label><input name="nama" required></div>
-    <div class="field"><label>KW</label><input name="kw"></div>
-    <div class="field"><label>Ukuran</label><input name="ukuran"></div>
-    <div class="field"><label>Isi</label><input name="isi"></div>
-    <div class="field"><label>Berat/Pack</label><input name="beratPack"></div>
-    <div class="field"><label>Berat Ekspedisi</label><input name="beratEkspedisi"></div>
-    <div class="field"><label>Harga Satuan/Pack</label><input name="harga"></div>
-    <div class="field"><label>Per Ikat</label><input name="perIkat"></div>
-    <div class="field"><label>Per Ball</label><input name="perBall"></div>
-    <button class="btn btn-primary" type="submit">Tambah Barang</button>
-  `;
+  let fieldsHtml = `<div class="field"><label>${cfg.label}</label><input name="nama" required></div>`;
+  cfg.specCols.forEach(c => { fieldsHtml += `<div class="field"><label>${c.label}</label><input name="${c.key}"></div>`; });
+  fieldsHtml += `<button class="btn btn-primary" type="submit">Tambah</button>`;
+  manualForm.innerHTML = fieldsHtml;
   body.appendChild(manualForm);
 
   manualForm.addEventListener("submit", async (e) => {
@@ -874,26 +804,49 @@ function renderMasterBarangTab(body) {
     const f = new FormData(manualForm);
     const nama = f.get("nama").trim();
     if (!nama) return;
+    const payload = { nama, createdBy: currentUser.email, createdAt: serverTimestamp() };
+    cfg.specCols.forEach(c => { payload[c.key] = f.get(c.key) || ""; });
     try {
-      await addDoc(collection(db, colName), {
-        nama,
-        kw: f.get("kw") || "", ukuran: f.get("ukuran") || "", isi: f.get("isi") || "",
-        beratPack: f.get("beratPack") || "", beratEkspedisi: f.get("beratEkspedisi") || "",
-        harga: f.get("harga") || "", perIkat: f.get("perIkat") || "", perBall: f.get("perBall") || "",
-        createdBy: currentUser.email, createdAt: serverTimestamp(),
-      });
-      showToast("Barang tersimpan");
+      await addDoc(collection(db, colName), payload);
+      showToast(`${cfg.label} tersimpan`);
       manualForm.reset();
     } catch (err) { showToast(err.message, "err"); }
   });
 
-  // --- Daftar barang ---
+  // ---- Import cepat tempel-list (khusus tipe tanpa kolom tambahan, mis. Customer) ----
+  if (!hasSpec) {
+    const bulkWrap = document.createElement("div");
+    bulkWrap.className = "form-grid";
+    bulkWrap.style.marginBottom = "18px";
+    bulkWrap.innerHTML = `
+      <div class="field" style="grid-column:1/-1">
+        <label>Atau tempel banyak sekaligus (satu ${cfg.label.toLowerCase()} per baris)</label>
+        <textarea name="bulk" rows="3" style="width:100%;padding:10px 12px;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px;font-family:inherit;resize:vertical;"></textarea>
+      </div>
+      <button class="btn btn-primary" type="button" id="btn-bulk-import">Simpan / Import</button>
+    `;
+    body.appendChild(bulkWrap);
+    bulkWrap.querySelector("#btn-bulk-import").addEventListener("click", async () => {
+      const raw = bulkWrap.querySelector("textarea[name=bulk]").value;
+      const names = raw.split("\n").map(s => s.trim()).filter(Boolean);
+      if (!names.length) { showToast("Isi dulu minimal satu nama", "err"); return; }
+      try {
+        await Promise.all(names.map(nama =>
+          addDoc(collection(db, colName), { nama, createdBy: currentUser.email, createdAt: serverTimestamp() })
+        ));
+        showToast(`${names.length} ${cfg.label} tersimpan`);
+        bulkWrap.querySelector("textarea[name=bulk]").value = "";
+      } catch (err) { showToast(err.message, "err"); }
+    });
+  }
+
+  // ---- Daftar data ----
   const listHolder = document.createElement("div");
   body.appendChild(listHolder);
 
   listenCollection(colName, [orderBy("nama")], (rows) => {
     listHolder.innerHTML = "";
-    const headers = ["Nama", ...BARANG_SPEC_COLS.map(c => c.label), ""];
+    const headers = [cfg.label, ...cfg.specCols.map(c => c.label), "Ditambahkan Oleh", ""];
     listHolder.appendChild(makeTable(
       headers, rows,
       (r) => {
@@ -901,18 +854,21 @@ function renderMasterBarangTab(body) {
         const tdNama = document.createElement("td");
         tdNama.textContent = r.nama;
         tr.appendChild(tdNama);
-        BARANG_SPEC_COLS.forEach(c => {
+        cfg.specCols.forEach(c => {
           const td = document.createElement("td");
           td.className = "num";
           td.textContent = (r[c.key] === undefined || r[c.key] === "") ? "-" : r[c.key];
           tr.appendChild(td);
         });
+        const tdBy = document.createElement("td");
+        tdBy.textContent = r.createdBy || "-";
+        tr.appendChild(tdBy);
         const tdAction = document.createElement("td");
-        tdAction.appendChild(makeDeleteBtn(colName, r.id, r.nama, "barang"));
+        tdAction.appendChild(makeDeleteBtn(colName, r.id, r.nama, cfg.label));
         tr.appendChild(tdAction);
         return tr;
       },
-      "Belum ada data barang"
+      `Belum ada data ${cfg.label}`
     ));
   });
 }
