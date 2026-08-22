@@ -38,6 +38,14 @@ const VIEW_TITLES = {
   "master-data": "Data Master (Barang · Angkutan · Customer)",
 };
 
+// Ikon SVG kecil, dipakai di header form & tombol (tanpa library eksternal)
+const ICONS = {
+  building: `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21h18"/><path d="M5 21V7l8-4v18"/><path d="M19 21V11l-6-4"/><line x1="9" y1="9" x2="9" y2="9.01"/><line x1="9" y1="12" x2="9" y2="12.01"/><line x1="9" y1="15" x2="9" y2="15.01"/></svg>`,
+  trash: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>`,
+  save: `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>`,
+  plus: `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>`,
+};
+
 // Koleksi data master & definisi kolomnya (dipakai untuk import Excel, form manual, dan tabel)
 const MASTER_LISTS = {
   barang: {
@@ -304,7 +312,20 @@ async function nextBMBNumber(pabrik) {
 // ---------------------------------------------------------------
 function renderInputBMB(main) {
   const pabrik = ROLES[currentRole].pabrik;
-  const c = card(`Form BMB — Pabrik ${pabrik}`);
+  const c = card("");
+  c.querySelector("h2").remove();
+
+  // --- header ikon: FORM BMB / Pabrik LKJ|JLP ---
+  const headerRow = document.createElement("div");
+  headerRow.className = "header-icon-row";
+  headerRow.innerHTML = `
+    <div class="header-icon-box">${ICONS.building}</div>
+    <div>
+      <div class="header-icon-title">FORM BMB</div>
+      <div class="header-icon-sub">Pabrik ${pabrik}</div>
+    </div>
+  `;
+  c.appendChild(headerRow);
 
   // --- header: No. BMB (otomatis) & Tanggal ---
   const header = document.createElement("div");
@@ -315,6 +336,7 @@ function renderInputBMB(main) {
     <div class="field"><label>Tanggal</label><input name="tanggal" type="date" value="${todayStr()}" required></div>
   `;
   c.appendChild(header);
+  c.appendChild(Object.assign(document.createElement("hr"), { className: "divider" }));
   const noBMBInput = header.querySelector("input[name=noBMB]");
   const tanggalInput = header.querySelector("input[name=tanggal]");
 
@@ -372,12 +394,12 @@ function renderInputBMB(main) {
     const tr = document.createElement("tr");
     const rowNo = tbody.children.length + 1;
     tr.innerHTML = `
-      <td class="num">${rowNo}</td>
+      <td><span class="row-num-badge">${rowNo}</span></td>
       <td><select name="produk" style="width:100%;"></select></td>
       <td><input name="qty" type="number" min="0" step="any" placeholder="0" style="width:100%;"></td>
       <td class="num cell-stok-saat-ini">-</td>
       <td class="num cell-stok-baru">-</td>
-      <td><button type="button" class="btn btn-danger" style="padding:5px 8px;font-size:12px;">✕</button></td>
+      <td><button type="button" class="btn btn-danger" style="width:auto;padding:6px 9px;">${ICONS.trash}</button></td>
     `;
     const select = tr.querySelector("select[name=produk]");
     populateMasterSelect(select, "barang", "Pilih...");
@@ -391,25 +413,26 @@ function renderInputBMB(main) {
   }
 
   function renumberRows() {
-    [...tbody.children].forEach((tr, i) => { tr.querySelector("td.num").textContent = i + 1; });
+    [...tbody.children].forEach((tr, i) => { tr.querySelector(".row-num-badge").textContent = i + 1; });
   }
 
   for (let i = 0; i < 6; i++) addRow();
 
   const addRowBtn = document.createElement("button");
   addRowBtn.type = "button";
-  addRowBtn.className = "btn";
+  addRowBtn.className = "btn btn-outline-accent";
   addRowBtn.style.cssText = "width:auto;padding:8px 16px;margin-top:12px;";
-  addRowBtn.textContent = "+ Tambah Baris";
+  addRowBtn.innerHTML = `${ICONS.plus} Tambah Baris`;
   addRowBtn.addEventListener("click", addRow);
   c.appendChild(addRowBtn);
+  c.appendChild(Object.assign(document.createElement("hr"), { className: "divider" }));
 
   // --- simpan semua baris yang terisi ---
   const saveBtn = document.createElement("button");
   saveBtn.type = "button";
   saveBtn.className = "btn btn-primary";
-  saveBtn.style.cssText = "width:auto;padding:11px 28px;margin-top:20px;display:block;";
-  saveBtn.textContent = "Simpan Data";
+  saveBtn.style.cssText = "width:auto;padding:11px 28px;display:block;";
+  saveBtn.innerHTML = `${ICONS.save} Simpan Data`;
   saveBtn.addEventListener("click", async () => {
     const noBMB = noBMBInput.value;
     const tanggal = tanggalInput.value;
@@ -421,7 +444,7 @@ function renderInputBMB(main) {
 
     if (!entries.length) { showToast("Isi minimal satu baris (produk & qty)", "err"); return; }
 
-    saveBtn.disabled = true; saveBtn.textContent = "Menyimpan...";
+    saveBtn.disabled = true; saveBtn.innerHTML = "Menyimpan...";
     try {
       await Promise.all(entries.map(e => addDoc(collection(db, "bmb"), {
         pabrik, produk: e.produk, jumlah: e.qty, tanggal, noBMB,
@@ -439,7 +462,7 @@ function renderInputBMB(main) {
     } catch (err) {
       showToast(err.message, "err");
     } finally {
-      saveBtn.disabled = false; saveBtn.textContent = "Simpan Data";
+      saveBtn.disabled = false; saveBtn.innerHTML = `${ICONS.save} Simpan Data`;
     }
   });
   c.appendChild(saveBtn);
