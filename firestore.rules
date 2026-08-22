@@ -74,6 +74,16 @@ service cloud.firestore {
     match /counters/{counterId} {
       allow read, write: if isSignedIn() && (myRole() == 'lkj' || myRole() == 'jlp' || myRole() == 'marketing' || myRole() == 'admin');
     }
+
+    // ---- stockOpname: hasil stock opname jadi baseline Sisa Stock.
+    // lkj/jlp boleh buat entri untuk pabrik miliknya sendiri; semua yang login boleh baca
+    // (dipakai perhitungan Sisa Barang di menu Marketing juga).
+    match /stockOpname/{docId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn()
+        && (myRole() == 'lkj' || myRole() == 'jlp')
+        && request.resource.data.pabrik == (myRole() == 'lkj' ? 'LKJ' : 'JLP');
+      allow update, delete: if isSignedIn() && myRole() == 'admin';
+    }
   }
 }
-
