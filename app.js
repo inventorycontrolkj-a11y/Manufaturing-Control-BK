@@ -148,6 +148,7 @@ onAuthStateChanged(auth, async (user) => {
   clearListeners();
   if (!user) {
     currentUser = null; currentRole = null;
+    delete document.body.dataset.role;
     loginScreen.style.display = "flex";
     appScreen.classList.remove("active");
     loginForm.reset();
@@ -176,6 +177,7 @@ $("#logout-btn").addEventListener("click", () => signOut(auth));
 function buildShell() {
   const cfg = ROLES[currentRole];
   document.documentElement.style.setProperty("--role-color", `var(${cfg.color})`);
+  document.body.dataset.role = currentRole; // dipakai CSS untuk aksen warna khusus per role (mis. JLP biru)
   $("#role-badge").textContent = cfg.label;
   $("#who").textContent = currentUser.email;
 
