@@ -18,9 +18,9 @@ const db = getFirestore(app);
 // ---------------------------------------------------------------
 const ROLES = {
   lkj:        { label: "Pabrik LKJ",      color: "--lkj",        pabrik: "LKJ",
-                menu: ["input-bmb","rekap-bmb","input-do","rekap-do","sisa-so","sisa-barang"] },
+                menu: ["input-bmb","rekap-bmb","input-do","rekap-do","stock-opname","riwayat-opname","sisa-so","sisa-barang"] },
   jlp:        { label: "Pabrik JLP",      color: "--jlp",        pabrik: "JLP",
-                menu: ["input-bmb","rekap-bmb","input-do","rekap-do","sisa-so","sisa-barang"] },
+                menu: ["input-bmb","rekap-bmb","input-do","rekap-do","stock-opname","riwayat-opname","sisa-so","sisa-barang"] },
   marketing:  { label: "Marketing",       color: "--marketing",
                 menu: ["input-so","rekap-so","sisa-barang"] },
   ekspedisi:  { label: "Team Ekspedisi",  color: "--ekspedisi",
@@ -35,6 +35,7 @@ const VIEW_TITLES = {
   "sisa-so": "Sisa Sales Order", "sisa-barang": "Sisa Barang",
   "input-so": "Input Sales Order", "rekap-so": "Rekap Sales Order",
   "input-nodo": "Input Nomor DO", "manage-users": "Kelola User & Akses",
+  "stock-opname": "Stock Opname", "riwayat-opname": "Riwayat Stock Opname",
   "master-data": "Data Master (Barang · Angkutan · Customer)",
 };
 
@@ -235,6 +236,44 @@ function listenCollection(colName, constraints, cb) {
 }
 
 // ---------------------------------------------------------------
+// Hitung Sisa Stock per produk, dengan Stock Opname sebagai titik pijakan.
+// Kalau produk pernah di-opname, hanya BMB/DO SETELAH tanggal opname terakhir
+// yang dihitung di atas Stock Awal hasil opname itu (supaya tidak dobel-hitung
+// saat opname diulang tiap bulan). Kalau belum pernah di-opname, dihitung dari
+// total BMB - total DO seperti biasa (baseline 0).
+// ---------------------------------------------------------------
+function buildStockMap(opnameRows, bmbRows, doRows) {
+  const latestOpname = {}; // produk -> entri opname terbaru
+  opnameRows.forEach(r => {
+    const existing = latestOpname[r.produk];
+    if (!existing || (r.tanggalOpname || "") > (existing.tanggalOpname || "")) {
+      latestOpname[r.produk] = r;
+    }
+  });
+
+  const produkSet = new Set([
+    ...bmbRows.map(r => r.produk),
+    ...doRows.map(r => r.produk),
+    ...Object.keys(latestOpname),
+  ]);
+
+  const map = {};
+  produkSet.forEach(produk => {
+    const opname = latestOpname[produk];
+    const baseline = opname ? (Number(opname.stockAwal) || 0) : 0;
+    const cutoff = opname ? (opname.tanggalOpname || "") : null;
+    const masuk = bmbRows
+      .filter(r => r.produk === produk && (!cutoff || (r.tanggal || "") > cutoff))
+      .reduce((s, r) => s + (Number(r.jumlah) || 0), 0);
+    const keluar = doRows
+      .filter(r => r.produk === produk && (!cutoff || (r.tanggal || "") > cutoff))
+      .reduce((s, r) => s + (Number(r.jumlah) || 0), 0);
+    map[produk] = baseline + masuk - keluar;
+  });
+  return map;
+}
+
+// ---------------------------------------------------------------
 // Isi <select> dari salah satu daftar data master (barang/angkutan/customer),
 // realtime — otomatis update kalau admin menambah/menghapus data master.
 // ---------------------------------------------------------------
@@ -345,22 +384,16 @@ function renderInputBMB(main) {
   nextBMBNumber(pabrik).then(no => { noBMBInput.value = no; })
     .catch(err => { noBMBInput.value = "-"; showToast("Gagal membuat No. BMB: " + err.message, "err"); });
 
-  // --- stok saat ini, dihitung live dari data BMB & DO pabrik ini ---
+  // --- stok saat ini, dihitung live dari Stock Opname + BMB & DO pabrik ini ---
   let stockMap = {}; // produk -> sisa stok saat ini
-  listenCollection("bmb", [where("pabrik", "==", pabrik)], (rows) => {
-    recomputeStock(rows, "in"); refreshAllRows();
-  });
-  listenCollection("deliveryOrders", [where("pabrik", "==", pabrik)], (rows) => {
-    recomputeStock(rows, "out"); refreshAllRows();
-  });
-  let masukRows = [], keluarRows = [];
-  function recomputeStock(rows, kind) {
-    if (kind === "in") masukRows = rows; else keluarRows = rows;
-    const map = {};
-    masukRows.forEach(r => { map[r.produk] = (map[r.produk] || 0) + (Number(r.jumlah) || 0); });
-    keluarRows.forEach(r => { map[r.produk] = (map[r.produk] || 0) - (Number(r.jumlah) || 0); });
-    stockMap = map;
+  let opnameRows = [], bmbRowsRaw = [], doRowsRaw = [];
+  function recomputeStock() {
+    stockMap = buildStockMap(opnameRows, bmbRowsRaw, doRowsRaw);
+    refreshAllRows();
   }
+  listenCollection("stockOpname", [where("pabrik", "==", pabrik)], (rows) => { opnameRows = rows; recomputeStock(); });
+  listenCollection("bmb", [where("pabrik", "==", pabrik)], (rows) => { bmbRowsRaw = rows; recomputeStock(); });
+  listenCollection("deliveryOrders", [where("pabrik", "==", pabrik)], (rows) => { doRowsRaw = rows; recomputeStock(); });
 
   // --- tabel baris input ---
   const tableWrap = document.createElement("div");
@@ -580,48 +613,235 @@ function renderRekapDO(main) {
 }
 
 // ---------------------------------------------------------------
+// VIEW: Stock Opname (LKJ / JLP) — form multi-baris, hasil hitung fisik
+// jadi Stock Awal baru mulai tanggal opname (BMB/DO sebelumnya "dikunci").
+// ---------------------------------------------------------------
+function renderStockOpname(main) {
+  const pabrik = ROLES[currentRole].pabrik;
+  const c = card("");
+  c.querySelector("h2").remove();
+
+  const headerRow = document.createElement("div");
+  headerRow.className = "header-icon-row";
+  headerRow.innerHTML = `
+    <div class="header-icon-box">${ICONS.building}</div>
+    <div>
+      <div class="header-icon-title">Stock Opname</div>
+      <div class="header-icon-sub">Pabrik ${pabrik}</div>
+    </div>
+  `;
+  c.appendChild(headerRow);
+
+  const hint = document.createElement("div");
+  hint.className = "hint";
+  hint.style.marginBottom = "16px";
+  hint.textContent = "Isi hasil hitung fisik gudang di kolom Stock Fisik. Setelah disimpan, angka ini jadi Stock Awal baru — BMB & DO SEBELUM tanggal opname ini tidak lagi memengaruhi Sisa Stock, hanya transaksi SETELAH tanggal ini yang dihitung di atasnya.";
+  c.appendChild(hint);
+
+  const header = document.createElement("div");
+  header.className = "form-grid";
+  header.style.marginBottom = "18px";
+  header.innerHTML = `<div class="field"><label>Tanggal Opname</label><input name="tanggalOpname" type="date" value="${todayStr()}" required></div>`;
+  c.appendChild(header);
+  c.appendChild(Object.assign(document.createElement("hr"), { className: "divider" }));
+  const tanggalInput = header.querySelector("input[name=tanggalOpname]");
+
+  // stok sistem saat ini (sebelum opname baru ini disimpan) — buat pembanding
+  let opnameRows = [], bmbRows = [], doRows = [];
+  let systemStockMap = {};
+  function recomputeSystemStock() {
+    systemStockMap = buildStockMap(opnameRows, bmbRows, doRows);
+    refreshAllRows();
+  }
+  listenCollection("stockOpname", [where("pabrik", "==", pabrik)], (rows) => { opnameRows = rows; recomputeSystemStock(); });
+  listenCollection("bmb", [where("pabrik", "==", pabrik)], (rows) => { bmbRows = rows; recomputeSystemStock(); });
+  listenCollection("deliveryOrders", [where("pabrik", "==", pabrik)], (rows) => { doRows = rows; recomputeSystemStock(); });
+
+  const tableWrap = document.createElement("div");
+  tableWrap.className = "table-bordered-wrap";
+  const table = document.createElement("table");
+  table.innerHTML = `<thead><tr>
+      <th style="width:36px;">No</th>
+      <th style="width:260px;max-width:260px;">Nama Barang</th>
+      <th style="width:130px;">Stock Sistem</th>
+      <th style="width:130px;">Stock Fisik</th>
+      <th style="width:110px;">Selisih</th>
+      <th style="width:40px;"></th>
+    </tr></thead><tbody></tbody>`;
+  table.style.tableLayout = "fixed";
+  const tbody = table.querySelector("tbody");
+  tableWrap.appendChild(table);
+  c.appendChild(tableWrap);
+
+  function refreshAllRows() { tbody.querySelectorAll("tr").forEach(updateRowCalc); }
+
+  function updateRowCalc(tr) {
+    const produk = tr.querySelector("select[name=produk]").value;
+    const fisikInput = tr.querySelector("input[name=fisik]");
+    const fisik = fisikInput.value === "" ? null : Number(fisikInput.value);
+    const sistemCell = tr.querySelector(".cell-sistem");
+    const selisihCell = tr.querySelector(".cell-selisih");
+    const sistem = produk ? (systemStockMap[produk] || 0) : null;
+    sistemCell.textContent = produk ? fmtNum(sistem) : "-";
+    if (produk && fisik !== null) {
+      const selisih = fisik - sistem;
+      selisihCell.textContent = (selisih > 0 ? "+" : "") + fmtNum(selisih);
+      selisihCell.style.color = selisih === 0 ? "var(--text-dim)" : (selisih > 0 ? "var(--ok)" : "var(--danger)");
+    } else {
+      selisihCell.textContent = "-";
+      selisihCell.style.color = "";
+    }
+  }
+
+  function addRow() {
+    const tr = document.createElement("tr");
+    const rowNo = tbody.children.length + 1;
+    tr.innerHTML = `
+      <td><span class="row-num-badge">${rowNo}</span></td>
+      <td><select name="produk" style="width:100%;"></select></td>
+      <td class="num cell-sistem">-</td>
+      <td><input name="fisik" type="number" min="0" step="any" placeholder="0" style="width:100%;"></td>
+      <td class="num cell-selisih">-</td>
+      <td><button type="button" class="btn btn-danger" style="width:auto;padding:6px 9px;">${ICONS.trash}</button></td>
+    `;
+    const select = tr.querySelector("select[name=produk]");
+    populateMasterSelect(select, "barang", "Pilih...");
+    select.addEventListener("change", () => updateRowCalc(tr));
+    tr.querySelector("input[name=fisik]").addEventListener("input", () => updateRowCalc(tr));
+    tr.querySelector("button").addEventListener("click", () => { tr.remove(); renumberRows(); });
+    tbody.appendChild(tr);
+  }
+  function renumberRows() {
+    [...tbody.children].forEach((tr, i) => { tr.querySelector(".row-num-badge").textContent = i + 1; });
+  }
+  for (let i = 0; i < 6; i++) addRow();
+
+  const addRowBtn = document.createElement("button");
+  addRowBtn.type = "button";
+  addRowBtn.className = "btn btn-outline-accent";
+  addRowBtn.style.cssText = "width:auto;padding:8px 16px;margin-top:12px;";
+  addRowBtn.innerHTML = `${ICONS.plus} Tambah Baris`;
+  addRowBtn.addEventListener("click", addRow);
+  c.appendChild(addRowBtn);
+  c.appendChild(Object.assign(document.createElement("hr"), { className: "divider" }));
+
+  const saveBtn = document.createElement("button");
+  saveBtn.type = "button";
+  saveBtn.className = "btn btn-primary";
+  saveBtn.style.cssText = "width:auto;padding:11px 28px;display:block;";
+  saveBtn.innerHTML = `${ICONS.save} Simpan Hasil Opname`;
+  saveBtn.addEventListener("click", async () => {
+    const tanggalOpname = tanggalInput.value;
+    if (!tanggalOpname) { showToast("Isi tanggal opname dulu", "err"); return; }
+    const entries = [...tbody.children].map(tr => ({
+      produk: tr.querySelector("select[name=produk]").value,
+      fisik: tr.querySelector("input[name=fisik]").value,
+    })).filter(e => e.produk && e.fisik !== "");
+
+    if (!entries.length) { showToast("Isi minimal satu baris (produk & stock fisik)", "err"); return; }
+
+    saveBtn.disabled = true; saveBtn.innerHTML = "Menyimpan...";
+    try {
+      await Promise.all(entries.map(e => {
+        const fisikNum = Number(e.fisik);
+        const sistem = systemStockMap[e.produk] || 0;
+        return addDoc(collection(db, "stockOpname"), {
+          pabrik, produk: e.produk, tanggalOpname,
+          stockAwal: fisikNum, stockSistemSebelum: sistem, selisih: fisikNum - sistem,
+          createdBy: currentUser.email, createdAt: serverTimestamp(),
+        });
+      }));
+      showToast(`Stock Opname tersimpan (${entries.length} item)`);
+      tbody.innerHTML = "";
+      for (let i = 0; i < 6; i++) addRow();
+      tanggalInput.value = todayStr();
+    } catch (err) {
+      showToast(err.message, "err");
+    } finally {
+      saveBtn.disabled = false; saveBtn.innerHTML = `${ICONS.save} Simpan Hasil Opname`;
+    }
+  });
+  c.appendChild(saveBtn);
+
+  main.appendChild(c);
+}
+
+// ---------------------------------------------------------------
+// VIEW: Riwayat Stock Opname (LKJ / JLP)
+// ---------------------------------------------------------------
+function renderRiwayatOpname(main) {
+  const pabrik = ROLES[currentRole].pabrik;
+  const c = card(`Riwayat Stock Opname — Pabrik ${pabrik}`);
+  const holder = document.createElement("div");
+  holder.style.overflowX = "auto";
+  c.appendChild(holder);
+  main.appendChild(c);
+
+  listenCollection("stockOpname", [where("pabrik", "==", pabrik), orderBy("tanggalOpname", "desc")], (rows) => {
+    holder.innerHTML = "";
+    holder.appendChild(makeTable(
+      ["Tanggal Opname", "Produk", "Stock Sistem (Sebelum)", "Stock Fisik (Hasil Opname)", "Selisih", "Diinput Oleh"],
+      rows,
+      (r) => {
+        const tr = document.createElement("tr");
+        const selisih = r.selisih !== undefined ? r.selisih : (r.stockAwal - (r.stockSistemSebelum || 0));
+        const selisihColor = selisih === 0 ? "" : (selisih > 0 ? "color:var(--ok);" : "color:var(--danger);");
+        tr.innerHTML = `<td>${r.tanggalOpname}</td><td>${r.produk}</td>
+          <td class="num">${fmtNum(r.stockSistemSebelum || 0)}</td>
+          <td class="num">${fmtNum(r.stockAwal)}</td>
+          <td class="num" style="${selisihColor}">${(selisih > 0 ? "+" : "") + fmtNum(selisih)}</td>
+          <td>${r.createdBy}</td>`;
+        return tr;
+      },
+      "Belum ada riwayat Stock Opname"
+    ));
+  });
+}
+
+// ---------------------------------------------------------------
 // VIEW: Sisa Barang (LKJ / JLP: stok pabrik sendiri, Marketing: semua pabrik)
 // ---------------------------------------------------------------
 function renderSisaBarang(main) {
   const isMarketing = currentRole === "marketing";
   const pabrikList = isMarketing ? ["LKJ", "JLP"] : [ROLES[currentRole].pabrik];
   const c = card(isMarketing ? "Sisa Barang — Semua Pabrik" : `Sisa Barang — Pabrik ${pabrikList[0]}`);
+  const hint = document.createElement("div");
+  hint.className = "hint";
+  hint.style.marginBottom = "14px";
+  hint.textContent = "Dihitung dari hasil Stock Opname terakhir (kalau ada) ditambah BMB dan dikurangi DO setelah tanggal opname tersebut.";
+  c.appendChild(hint);
   const statHolder = document.createElement("div");
   statHolder.className = "stat-grid";
   c.appendChild(statHolder);
   main.appendChild(c);
 
-  let bmbRows = [], doRows = [];
+  let opnameRows = [], bmbRows = [], doRows = [];
   const recompute = () => {
-    const byKey = {}; // "pabrik|produk" -> {masuk, keluar}
-    bmbRows.forEach(r => {
-      const k = `${r.pabrik}|${r.produk}`;
-      byKey[k] = byKey[k] || { pabrik: r.pabrik, produk: r.produk, masuk: 0, keluar: 0 };
-      byKey[k].masuk += Number(r.jumlah) || 0;
+    const entries = [];
+    pabrikList.forEach(pabrik => {
+      const map = buildStockMap(
+        opnameRows.filter(r => r.pabrik === pabrik),
+        bmbRows.filter(r => r.pabrik === pabrik),
+        doRows.filter(r => r.pabrik === pabrik)
+      );
+      Object.entries(map).forEach(([produk, sisa]) => entries.push({ pabrik, produk, sisa }));
     });
-    doRows.forEach(r => {
-      const k = `${r.pabrik}|${r.produk}`;
-      byKey[k] = byKey[k] || { pabrik: r.pabrik, produk: r.produk, masuk: 0, keluar: 0 };
-      byKey[k].keluar += Number(r.jumlah) || 0;
-    });
-    const entries = Object.values(byKey).sort((a, b) => a.produk.localeCompare(b.produk));
+    entries.sort((a, b) => a.produk.localeCompare(b.produk));
     statHolder.innerHTML = "";
     if (!entries.length) {
-      statHolder.innerHTML = `<div class="hint">Belum ada data BMB/DO untuk dihitung.</div>`;
+      statHolder.innerHTML = `<div class="hint">Belum ada data BMB/DO/Opname untuk dihitung.</div>`;
       return;
     }
     entries.forEach(e => {
-      const sisa = e.masuk - e.keluar;
       const colorVar = e.pabrik === "LKJ" ? "--lkj" : "--jlp";
       statHolder.appendChild(statCard(
         `${e.produk}${isMarketing ? " · " + e.pabrik : ""}`,
-        fmtNum(sisa),
-        `Masuk ${fmtNum(e.masuk)} · Keluar ${fmtNum(e.keluar)}`,
-        colorVar
+        fmtNum(e.sisa), "", colorVar
       ));
     });
   };
 
+  listenCollection("stockOpname", [where("pabrik", "in", pabrikList)], (rows) => { opnameRows = rows; recompute(); });
   listenCollection("bmb", [where("pabrik", "in", pabrikList)], (rows) => { bmbRows = rows; recompute(); });
   listenCollection("deliveryOrders", [where("pabrik", "in", pabrikList)], (rows) => { doRows = rows; recompute(); });
 }
@@ -1299,6 +1519,8 @@ const RENDERERS = {
   "input-nodo": renderInputNoDO,
   "manage-users": renderManageUsers,
   "master-data": renderMasterData,
+  "stock-opname": renderStockOpname,
+  "riwayat-opname": renderRiwayatOpname,
 };
 
 // ---------------------------------------------------------------
