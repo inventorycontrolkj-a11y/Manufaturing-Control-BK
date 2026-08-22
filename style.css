@@ -305,14 +305,36 @@ tbody tr:hover{background:var(--panel-2);}
 .item-toolbar h2{margin:0;}
 .btn-add-row{width:auto;padding:8px 16px;font-size:13px;}
 
-.item-table-wrap{overflow-x:auto;margin-bottom:6px;}
-.item-table-wrap table{min-width:760px;}
-.item-table-wrap input, .item-table-wrap select{
-  width:100%;padding:7px 9px;background:var(--panel-2);border:1px solid var(--border);
-  border-radius:6px;color:var(--text);font-size:13px;font-family:inherit;
+.item-table-wrap{
+  overflow-x:auto;margin-bottom:6px;
+  border:1px solid var(--border);border-radius:10px;
 }
-.item-table-wrap select{color:var(--text);}
+.item-table-wrap table{min-width:760px;}
+.item-table-wrap thead tr th:first-child, .item-table-wrap thead tr th:last-child{border-radius:0;}
+.item-table-wrap tbody tr:last-child td{border-bottom:none;}
 .row-del-btn{padding:5px 9px;font-size:12px;}
+
+/* ---------- Kolom input di dalam tabel entri data (BMB, item SO, dsb.) ---------- */
+.table-bordered-wrap{
+  border:1px solid var(--border);border-radius:10px;overflow:hidden;margin-bottom:6px;
+}
+.table-bordered-wrap thead tr th:first-child, .table-bordered-wrap thead tr th:last-child{border-radius:0;}
+.table-bordered-wrap tbody tr:last-child td{border-bottom:none;}
+
+table td select, table td input, .item-table-wrap select, .item-table-wrap input{
+  width:100%;
+  min-height:42px;
+  padding:9px 11px;
+  background:var(--panel-2);
+  border:1px solid var(--border);
+  border-radius:7px;
+  color:var(--text-dim);
+  font-size:13.5px;
+  font-family:inherit;
+}
+table td select:focus, table td input:focus, .item-table-wrap select:focus, .item-table-wrap input:focus{
+  outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(22,163,74,0.10);
+}
 
 /* ---------- Ringkasan total ---------- */
 .summary-panel{
