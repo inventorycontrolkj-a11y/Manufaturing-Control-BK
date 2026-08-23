@@ -46,14 +46,15 @@ service cloud.firestore {
       allow delete: if isSignedIn() && myRole() == 'admin';
     }
 
-    // ---- salesOrders: hanya marketing boleh membuat, semua boleh baca.
+    // ---- salesOrders: marketing atau admin boleh membuat, semua boleh baca.
+    // Hanya admin yang bisa mengubah nomor SO (field noSO) secara manual.
     match /salesOrders/{docId} {
       allow read: if isSignedIn();
-      allow create: if isSignedIn() && myRole() == 'marketing';
+      allow create: if isSignedIn() && (myRole() == 'marketing' || myRole() == 'admin');
       allow update, delete: if isSignedIn() && myRole() == 'admin';
     }
 
-    // ---- data master (nama barang / angkutan / customer):
+    // ---- data master (nama barang / angkutan / customer / sales):
     // semua user yang login boleh baca (dipakai untuk dropdown di form),
     // hanya admin yang boleh menambah/menghapus.
     match /masterBarang/{docId} {
@@ -65,6 +66,10 @@ service cloud.firestore {
       allow create, delete: if isSignedIn() && myRole() == 'admin';
     }
     match /masterCustomer/{docId} {
+      allow read: if isSignedIn();
+      allow create, delete: if isSignedIn() && myRole() == 'admin';
+    }
+    match /masterSales/{docId} {
       allow read: if isSignedIn();
       allow create, delete: if isSignedIn() && myRole() == 'admin';
     }
