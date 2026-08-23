@@ -404,6 +404,13 @@ function buildAutocomplete(getNames, placeholder, onPick) {
     listBox.classList.add("show");
   }
 
+  // Cegah field kehilangan fokus (blur) saat jari menyentuh AREA KOSONG di
+  // kotak saran (mis. mau scroll, bukan pilih item) — sebelumnya pencegahan
+  // ini cuma ada di masing-masing item, jadi menyentuh sela-sela kosong di
+  // HP langsung dianggap "klik keluar" dan menutup kotaknya sebelum sempat
+  // di-scroll.
+  listBox.addEventListener("mousedown", (e) => e.preventDefault());
+
   input.addEventListener("input", () => { input.classList.remove("invalid-select"); showSuggestions(); });
   input.addEventListener("focus", showSuggestions);
   input.addEventListener("keydown", (e) => {
