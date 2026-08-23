@@ -347,12 +347,26 @@ function populateMasterSelect(selectEl, masterKey, placeholder) {
 function buildAutocomplete(getNames, placeholder, onPick) {
   const wrap = document.createElement("div");
   wrap.className = "autocomplete-wrap";
-  wrap.innerHTML = `<input type="text" autocomplete="off" placeholder="${placeholder}">
-    <div class="suggest-list"></div>`;
+  wrap.innerHTML = `<input type="text" autocomplete="off" placeholder="${placeholder}">`;
   const input = wrap.querySelector("input");
-  const listBox = wrap.querySelector(".suggest-list");
+
+  // Kotak saran ditempel ke <body>, BUKAN di dalam tabel — supaya tidak
+  // ikut kepotong oleh area tabel yang overflow-x:auto (batasan CSS bawaan:
+  // elemen dengan overflow-x selain 'visible' otomatis ikut membatasi
+  // overflow-y juga, walau tidak diminta).
+  const listBox = document.createElement("div");
+  listBox.className = "suggest-list suggest-list-portal";
+  document.body.appendChild(listBox);
+
+  function positionList() {
+    const r = input.getBoundingClientRect();
+    listBox.style.left = r.left + "px";
+    listBox.style.top = (r.bottom + 4) + "px";
+    listBox.style.width = r.width + "px";
+  }
 
   function showSuggestions() {
+    positionList();
     const names = getNames() || [];
     const keyword = input.value.trim().toLowerCase();
     const matches = names.filter(n => n.toLowerCase().includes(keyword));
@@ -391,8 +405,13 @@ function buildAutocomplete(getNames, placeholder, onPick) {
       if (onPick) onPick(input.value);
     }, 150);
   });
+  // Sembunyikan kalau halaman di-scroll (posisi kotak saran jadi tidak akurat lagi)
+  window.addEventListener("scroll", () => listBox.classList.remove("show"), true);
 
-  return { wrap, input };
+  return {
+    wrap, input,
+    destroy: () => listBox.remove(), // wajib dipanggil kalau baris/field ini dihapus dari layar
+  };
 }
 
 // ---------------------------------------------------------------
@@ -1264,13 +1283,16 @@ function renderInputSO(main) {
       <td><button type="button" class="btn btn-danger row-del-btn" style="width:auto;padding:6px 9px;">${ICONS.trash}</button></td>
     `;
     const namaCell = tr.querySelector(".nama-barang-cell");
-    const { wrap: barangWrap, input: produkInput } = buildAutocomplete(() => Object.keys(barangMap), "Ketik nama barang...", () => calcRow(tr));
+    const { wrap: barangWrap, input: produkInput, destroy: destroyBarangAutocomplete } =
+      buildAutocomplete(() => Object.keys(barangMap), "Ketik nama barang...", () => calcRow(tr));
     produkInput.classList.add("barang-input-el");
     namaCell.appendChild(barangWrap);
+    tr._destroyAutocomplete = destroyBarangAutocomplete; // dipakai saat Reset / hapus baris
 
     tr.querySelector("input[name=qtyOrder]").addEventListener("input", () => calcRow(tr));
     tr.querySelector("input[name=bonusPct]").addEventListener("input", () => calcRow(tr));
     tr.querySelector(".row-del-btn").addEventListener("click", () => {
+      destroyBarangAutocomplete();
       tr.remove();
       renumberItemRows();
       updateSummary();
@@ -1340,6 +1362,7 @@ function renderInputSO(main) {
     populateMasterSelect(infoForm.sales, "sales", "Pilih sales...");
     customerInput.value = "";
     customerInput.classList.remove("invalid-select");
+    [...tbody.children].forEach(tr => { if (tr._destroyAutocomplete) tr._destroyAutocomplete(); });
     tbody.innerHTML = "";
     addItemRow();
     noteTextarea.value = "";
