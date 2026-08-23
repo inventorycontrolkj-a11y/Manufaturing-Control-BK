@@ -37,13 +37,23 @@ service cloud.firestore {
     // ---- deliveryOrders: lkj/jlp boleh buat DO untuk pabrik sendiri.
     // ekspedisi boleh update field pengiriman (shipped/tanggalKirim) saja secara praktik,
     // (pembatasan field granular sebaiknya divalidasi lebih lanjut sesuai kebutuhan).
+    // ekspedisi sekarang yang membuat DO (bisa untuk pabrik LKJ maupun JLP
+    // sekaligus dalam satu form, tergantung "Ambil Dari" tiap baris barang).
     match /deliveryOrders/{docId} {
       allow read: if isSignedIn();
       allow create: if isSignedIn()
-        && (myRole() == 'lkj' || myRole() == 'jlp')
-        && request.resource.data.pabrik == myPabrik();
+        && (myRole() == 'ekspedisi' || myRole() == 'admin'
+            || ((myRole() == 'lkj' || myRole() == 'jlp') && request.resource.data.pabrik == myPabrik()));
       allow update: if isSignedIn() && (myRole() == 'ekspedisi' || myRole() == 'admin');
       allow delete: if isSignedIn() && myRole() == 'admin';
+    }
+
+    // ---- doTrips: ringkasan satu kali muat truk (dipakai untuk laporan cepat
+    // total per-trip). Dibuat oleh ekspedisi, semua yang login boleh baca.
+    match /doTrips/{docId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && (myRole() == 'ekspedisi' || myRole() == 'admin');
+      allow update, delete: if isSignedIn() && myRole() == 'admin';
     }
 
     // ---- salesOrders: marketing atau admin boleh membuat, semua boleh baca.
@@ -74,10 +84,11 @@ service cloud.firestore {
       allow create, delete: if isSignedIn() && myRole() == 'admin';
     }
 
-    // ---- counters: dipakai untuk generate No. BMB otomatis (mis. counters/bmb_LKJ_2608).
-    // lkj/jlp boleh baca & tulis (increment) counter miliknya sendiri.
+    // ---- counters: dipakai untuk generate nomor otomatis (BMB, Sales Order,
+    // dan trip DO). lkj/jlp/marketing/ekspedisi boleh baca & tulis (increment)
+    // counter yang relevan bagi mereka.
     match /counters/{counterId} {
-      allow read, write: if isSignedIn() && (myRole() == 'lkj' || myRole() == 'jlp' || myRole() == 'marketing' || myRole() == 'admin');
+      allow read, write: if isSignedIn() && (myRole() == 'lkj' || myRole() == 'jlp' || myRole() == 'marketing' || myRole() == 'ekspedisi' || myRole() == 'admin');
     }
 
     // ---- stockOpname: hasil stock opname jadi baseline Sisa Stock.
