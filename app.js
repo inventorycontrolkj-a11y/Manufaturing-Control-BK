@@ -228,6 +228,12 @@ function showToast(msg, type = "ok") {
 // ---------------------------------------------------------------
 function todayStr() { return new Date().toISOString().slice(0, 10); }
 
+function addDays(isoDate, days) {
+  const d = new Date(isoDate + "T00:00:00");
+  d.setDate(d.getDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
 function fmtNum(n) {
   return new Intl.NumberFormat("id-ID").format(n || 0);
 }
@@ -1024,11 +1030,19 @@ function renderInputSO(main) {
       <label>No. Sales Order${isAdmin ? "" : " (otomatis)"}</label>
       <input name="noSO" class="mono" value="Memuat..." ${isAdmin ? "" : "disabled"}>
     </div>
-    <div class="field"><label>Tanggal SO</label><input name="tanggal" type="date" value="${todayStr()}" required></div>
+    <div class="field">
+      <label>Tanggal SO (otomatis)</label>
+      <input name="tanggal" type="date" value="${todayStr()}" disabled>
+    </div>
+    <div class="field">
+      <label>Batas Kirim (otomatis, H+3)</label>
+      <input name="batasKirim" type="date" value="${addDays(todayStr(), 3)}" disabled>
+    </div>
   `;
   c.appendChild(header);
   const soNoInput = header.querySelector("input[name=noSO]");
   const tanggalSOInput = header.querySelector("input[name=tanggal]");
+  const batasKirimInput = header.querySelector("input[name=batasKirim]");
   nextSONumber().then(no => { soNoInput.value = no; })
     .catch(err => { soNoInput.value = "-"; showToast("Gagal membuat No. SO: " + err.message, "err"); });
   if (!isAdmin) {
@@ -1041,14 +1055,13 @@ function renderInputSO(main) {
   }
   c.appendChild(Object.assign(document.createElement("hr"), { className: "divider" }));
 
-  // --- info: sales, customer, batas kirim ---
+  // --- info: sales, customer ---
   const infoForm = document.createElement("div");
   infoForm.className = "form-grid";
   infoForm.style.marginBottom = "18px";
   infoForm.innerHTML = `
     <div class="field"><label>Sales</label><select name="sales" required></select></div>
     <div class="field"><label>Customer</label><select name="customer" required></select></div>
-    <div class="field"><label>Batas Kirim (opsional)</label><input name="batasKirim" type="date"></div>
   `;
   c.appendChild(infoForm);
   c.appendChild(Object.assign(document.createElement("hr"), { className: "divider" }));
@@ -1202,6 +1215,7 @@ function renderInputSO(main) {
   actions.querySelector("#btn-reset-so").addEventListener("click", () => {
     infoForm.reset();
     tanggalSOInput.value = todayStr();
+    batasKirimInput.value = addDays(todayStr(), 3);
     populateMasterSelect(infoForm.sales, "sales", "Pilih sales...");
     populateMasterSelect(infoForm.customer, "customer", "Pilih customer...");
     tbody.innerHTML = "";
@@ -1214,7 +1228,7 @@ function renderInputSO(main) {
     const sales = infoForm.sales.value;
     const customer = infoForm.customer.value;
     const tanggal = tanggalSOInput.value;
-    const batasKirim = infoForm.batasKirim.value || "";
+    const batasKirim = batasKirimInput.value || "";
     if (!sales) { showToast("Pilih sales dulu", "err"); return; }
     if (!customer) { showToast("Pilih customer dulu", "err"); return; }
     if (!tanggal) { showToast("Isi tanggal dulu", "err"); return; }
