@@ -234,6 +234,26 @@ function addDays(isoDate, days) {
   return d.toISOString().slice(0, 10);
 }
 
+function fmtTanggalPanjang(isoDate) {
+  if (!isoDate) return "-";
+  const bulan = ["Januari","Februari","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"];
+  const [y, m, d] = isoDate.split("-").map(Number);
+  if (!y || !m || !d) return isoDate;
+  return `${d} ${bulan[m - 1]} ${y}`;
+}
+
+// Parsing angka yang toleran terhadap format Indonesia (koma sebagai desimal,
+// mis. dari Excel "1,47"), selain format angka biasa (titik sebagai desimal).
+function toNumberID(val) {
+  if (typeof val === "number") return isNaN(val) ? 0 : val;
+  if (val === null || val === undefined || val === "") return 0;
+  const str = String(val).trim();
+  if (/^-?\d+(\.\d+)?$/.test(str)) return parseFloat(str);
+  const normalized = str.replace(/\./g, "").replace(",", ".");
+  const n = parseFloat(normalized);
+  return isNaN(n) ? 0 : n;
+}
+
 function fmtNum(n) {
   return new Intl.NumberFormat("id-ID").format(n || 0);
 }
@@ -1021,10 +1041,12 @@ function renderInputSO(main) {
 
   const isAdmin = currentRole === "admin";
 
-  // --- header: No. Sales Order & Tanggal SO ---
+  // --- header: No. Sales Order, Tanggal SO, Batas Kirim ---
   const header = document.createElement("div");
   header.className = "form-grid";
   header.style.marginBottom = "18px";
+  const tanggalSO = todayStr();
+  const batasKirim = addDays(tanggalSO, 3);
   header.innerHTML = `
     <div class="field">
       <label>No. Sales Order${isAdmin ? "" : " (otomatis)"}</label>
@@ -1032,17 +1054,15 @@ function renderInputSO(main) {
     </div>
     <div class="field">
       <label>Tanggal SO (otomatis)</label>
-      <input name="tanggal" type="date" value="${todayStr()}" disabled>
+      <div class="readonly-box">${fmtTanggalPanjang(tanggalSO)}</div>
     </div>
     <div class="field">
       <label>Batas Kirim (otomatis, H+3)</label>
-      <input name="batasKirim" type="date" value="${addDays(todayStr(), 3)}" disabled>
+      <div class="readonly-box">${fmtTanggalPanjang(batasKirim)}</div>
     </div>
   `;
   c.appendChild(header);
   const soNoInput = header.querySelector("input[name=noSO]");
-  const tanggalSOInput = header.querySelector("input[name=tanggal]");
-  const batasKirimInput = header.querySelector("input[name=batasKirim]");
   nextSONumber().then(no => { soNoInput.value = no; })
     .catch(err => { soNoInput.value = "-"; showToast("Gagal membuat No. SO: " + err.message, "err"); });
   if (!isAdmin) {
@@ -1055,8 +1075,9 @@ function renderInputSO(main) {
   }
   c.appendChild(Object.assign(document.createElement("hr"), { className: "divider" }));
 
-  // --- info: sales, customer ---
-  const infoForm = document.createElement("div");
+  // --- info: sales, customer (pakai <form> supaya infoForm.sales / infoForm.customer bisa diakses) ---
+  const infoForm = document.createElement("form");
+  infoForm.addEventListener("submit", (e) => e.preventDefault());
   infoForm.className = "form-grid";
   infoForm.style.marginBottom = "18px";
   infoForm.innerHTML = `
@@ -1191,7 +1212,7 @@ function renderInputSO(main) {
       if (produk && qtyOrder > 0) {
         totalItem++;
         totalQty += totalQtyRow;
-        const berat = barangMap[produk] ? Number(barangMap[produk].beratPack) || 0 : 0;
+        const berat = barangMap[produk] ? toNumberID(barangMap[produk].beratPack) : 0;
         totalTonase += berat * totalQtyRow;
       }
     });
@@ -1214,8 +1235,6 @@ function renderInputSO(main) {
 
   actions.querySelector("#btn-reset-so").addEventListener("click", () => {
     infoForm.reset();
-    tanggalSOInput.value = todayStr();
-    batasKirimInput.value = addDays(todayStr(), 3);
     populateMasterSelect(infoForm.sales, "sales", "Pilih sales...");
     populateMasterSelect(infoForm.customer, "customer", "Pilih customer...");
     tbody.innerHTML = "";
@@ -1227,11 +1246,8 @@ function renderInputSO(main) {
   actions.querySelector("#btn-save-so").addEventListener("click", async () => {
     const sales = infoForm.sales.value;
     const customer = infoForm.customer.value;
-    const tanggal = tanggalSOInput.value;
-    const batasKirim = batasKirimInput.value || "";
     if (!sales) { showToast("Pilih sales dulu", "err"); return; }
     if (!customer) { showToast("Pilih customer dulu", "err"); return; }
-    if (!tanggal) { showToast("Isi tanggal dulu", "err"); return; }
 
     const items = [...tbody.children].map(tr => {
       const produk = tr.querySelector("select[name=produk]").value;
@@ -1252,7 +1268,7 @@ function renderInputSO(main) {
     try {
       const noSO = soNoInput.value;
       await Promise.all(items.map(it => addDoc(collection(db, "salesOrders"), {
-        noSO, sales, customer, tanggal, batasKirim,
+        noSO, sales, customer, tanggal: tanggalSO, batasKirim,
         catatan: noteTextarea.value || "",
         produk: it.produk, harga: it.harga,
         qtyOrder: it.qtyOrder, bonusPct: it.bonusPct, qtyBonus: it.qtyBonus,
