@@ -1003,19 +1003,27 @@ function renderSisaSO(main) {
 }
 
 // ---------------------------------------------------------------
-// Nomor Sales Order otomatis: format YYMM + urutan 3 digit (global, semua marketing)
+// Nomor Sales Order: urutan global sederhana (bukan format tanggal), supaya
+// mudah di-set ulang oleh admin ke angka berapa pun (mis. mulai dari 7000).
+// Disimpan di counters/salesOrderSeq, field "seq" = nomor TERAKHIR yang dipakai.
 // ---------------------------------------------------------------
 async function nextSONumber() {
-  const now = new Date();
-  const prefix = String(now.getFullYear()).slice(-2) + String(now.getMonth() + 1).padStart(2, "0");
-  const counterRef = doc(db, "counters", `so_${prefix}`);
+  const counterRef = doc(db, "counters", "salesOrderSeq");
   const seq = await runTransaction(db, async (tx) => {
     const snap = await tx.get(counterRef);
     const next = (snap.exists() ? snap.data().seq : 0) + 1;
     tx.set(counterRef, { seq: next, updatedAt: serverTimestamp() });
     return next;
   });
-  return prefix + String(seq).padStart(3, "0");
+  return String(seq);
+}
+
+// Lihat nomor SO berikutnya TANPA memakai/mengunci nomornya (dipakai Admin
+// supaya membuka halaman ini tidak menghabiskan satu nomor urut sia-sia).
+async function nextPreviewSONumber() {
+  const snap = await getDoc(doc(db, "counters", "salesOrderSeq"));
+  const current = snap.exists() ? snap.data().seq : 0;
+  return current + 1;
 }
 
 // ---------------------------------------------------------------
@@ -1063,14 +1071,26 @@ function renderInputSO(main) {
   `;
   c.appendChild(header);
   const soNoInput = header.querySelector("input[name=noSO]");
-  nextSONumber().then(no => { soNoInput.value = no; })
-    .catch(err => { soNoInput.value = "-"; showToast("Gagal membuat No. SO: " + err.message, "err"); });
+  if (isAdmin) {
+    nextPreviewSONumber().then(n => { soNoInput.value = String(n); })
+      .catch(err => { soNoInput.value = "-"; showToast("Gagal memuat No. SO: " + err.message, "err"); });
+  } else {
+    nextSONumber().then(no => { soNoInput.value = no; })
+      .catch(err => { soNoInput.value = "-"; showToast("Gagal membuat No. SO: " + err.message, "err"); });
+  }
   if (!isAdmin) {
     const noteEl = document.createElement("div");
     noteEl.className = "hint";
     noteEl.style.marginTop = "-10px";
     noteEl.style.marginBottom = "10px";
     noteEl.textContent = "Nomor dibuat otomatis dan hanya bisa diubah oleh Admin.";
+    header.after(noteEl);
+  } else {
+    const noteEl = document.createElement("div");
+    noteEl.className = "hint";
+    noteEl.style.marginTop = "-10px";
+    noteEl.style.marginBottom = "10px";
+    noteEl.textContent = "Ubah angka ini untuk mengatur ulang nomor urut Sales Order berikutnya (berlaku untuk semua Marketing). Boleh diisi tanpa mengisi barang di bawah — klik \"Simpan Perubahan\" untuk menyimpan nomornya saja.";
     header.after(noteEl);
   }
   c.appendChild(Object.assign(document.createElement("hr"), { className: "divider" }));
@@ -1219,12 +1239,12 @@ function renderInputSO(main) {
   }
   updateSummary();
 
-  // --- tombol Reset & Simpan Data ---
+  // --- tombol Reset & Simpan ---
   const actions = document.createElement("div");
   actions.className = "form-actions";
   actions.innerHTML = `
     <button type="button" class="btn" id="btn-reset-so">↺ Reset</button>
-    <button type="button" class="btn btn-primary" id="btn-save-so">${ICONS.save} Simpan Data</button>
+    <button type="button" class="btn btn-primary" id="btn-save-so">${ICONS.save} ${isAdmin ? "Simpan Perubahan" : "Simpan Data"}</button>
   `;
   c.appendChild(actions);
   wrap.appendChild(c);
@@ -1240,13 +1260,8 @@ function renderInputSO(main) {
     updateSummary();
   });
 
-  actions.querySelector("#btn-save-so").addEventListener("click", async () => {
-    const sales = infoForm.sales.value;
-    const customer = infoForm.customer.value;
-    if (!sales) { showToast("Pilih sales dulu", "err"); return; }
-    if (!customer) { showToast("Pilih customer dulu", "err"); return; }
-
-    const items = [...tbody.children].map(tr => {
+  function collectItems() {
+    return [...tbody.children].map(tr => {
       const produk = tr.querySelector("select[name=produk]").value;
       const qtyOrder = Number(tr.querySelector("input[name=qtyOrder]").value) || 0;
       const bonusPct = Number(tr.querySelector("input[name=bonusPct]").value) || 0;
@@ -1257,7 +1272,60 @@ function renderInputSO(main) {
         keteranganItem: tr.querySelector("input[name=keterangan]").value || "",
       };
     }).filter(it => it.produk && it.qtyOrder > 0);
+  }
 
+  // ---- Admin: field No. Sales Order dipakai untuk MENGATUR ULANG nomor urut
+  // global. Kalau tabel barang juga diisi, sekalian dibuat Sales Order-nya
+  // dengan nomor itu. Kalau tabel kosong, cuma nomor urutnya yang diperbarui
+  // (dipakai untuk transaksi Marketing berikutnya).
+  async function handleAdminSave() {
+    const typedNo = Number(soNoInput.value);
+    if (!typedNo || typedNo < 1 || !Number.isInteger(typedNo)) {
+      showToast("Isi No. Sales Order dengan angka bulat yang valid", "err");
+      return;
+    }
+    const items = collectItems();
+    const btn = actions.querySelector("#btn-save-so");
+    btn.disabled = true; btn.innerHTML = "Menyimpan...";
+    try {
+      if (items.length) {
+        const sales = infoForm.sales.value;
+        const customer = infoForm.customer.value;
+        if (!sales) { showToast("Pilih sales dulu", "err"); btn.disabled = false; btn.innerHTML = `${ICONS.save} Simpan Perubahan`; return; }
+        if (!customer) { showToast("Pilih customer dulu", "err"); btn.disabled = false; btn.innerHTML = `${ICONS.save} Simpan Perubahan`; return; }
+        const noSO = String(typedNo);
+        await Promise.all(items.map(it => addDoc(collection(db, "salesOrders"), {
+          noSO, sales, customer, tanggal: tanggalSO, batasKirim,
+          catatan: noteTextarea.value || "",
+          produk: it.produk, harga: it.harga,
+          qtyOrder: it.qtyOrder, bonusPct: it.bonusPct, qtyBonus: it.qtyBonus,
+          jumlah: it.totalQty,
+          keteranganItem: it.keteranganItem,
+          createdBy: currentUser.email, createdAt: serverTimestamp(),
+        })));
+        await setDoc(doc(db, "counters", "salesOrderSeq"), { seq: typedNo, updatedAt: serverTimestamp() });
+        showToast(`Sales Order ${noSO} tersimpan (${items.length} item). Nomor berikutnya: ${typedNo + 1}.`);
+        actions.querySelector("#btn-reset-so").click();
+      } else {
+        await setDoc(doc(db, "counters", "salesOrderSeq"), { seq: typedNo, updatedAt: serverTimestamp() });
+        showToast(`Nomor Sales Order berikutnya diatur ke ${typedNo + 1}.`);
+      }
+      soNoInput.value = "Memuat...";
+      nextPreviewSONumber().then(n => { soNoInput.value = String(n); });
+    } catch (err) {
+      showToast(err.message, "err");
+    } finally {
+      btn.disabled = false; btn.innerHTML = `${ICONS.save} Simpan Perubahan`;
+    }
+  }
+
+  async function handleMarketingSave() {
+    const sales = infoForm.sales.value;
+    const customer = infoForm.customer.value;
+    if (!sales) { showToast("Pilih sales dulu", "err"); return; }
+    if (!customer) { showToast("Pilih customer dulu", "err"); return; }
+
+    const items = collectItems();
     if (!items.length) { showToast("Isi minimal satu barang dengan qty order", "err"); return; }
 
     const btn = actions.querySelector("#btn-save-so");
@@ -1282,8 +1350,13 @@ function renderInputSO(main) {
     } finally {
       btn.disabled = false; btn.innerHTML = `${ICONS.save} Simpan Data`;
     }
+  }
+
+  actions.querySelector("#btn-save-so").addEventListener("click", () => {
+    if (isAdmin) handleAdminSave(); else handleMarketingSave();
   });
 }
+
 
 // ---------------------------------------------------------------
 // VIEW: Rekap Sales Order (Marketing / Admin)
