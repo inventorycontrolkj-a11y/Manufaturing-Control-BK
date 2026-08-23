@@ -180,6 +180,10 @@ nav.menu button.active{background:var(--panel-2);color:var(--text);box-shadow:in
   color:#FFFFFF;
   flex-wrap:wrap;
   gap:12px;
+  position:sticky;
+  top:0;
+  z-index:30;
+  box-shadow:0 2px 10px rgba(24,36,32,0.12);
 }
 .topline-title{display:flex;align-items:center;gap:14px;}
 .topline-icon{
@@ -411,3 +415,66 @@ body[data-role="jlp"] .item-table-wrap select:focus, body[data-role="jlp"] .item
   border-color:var(--jlp);box-shadow:0 0 0 3px color-mix(in srgb, var(--jlp) 10%, transparent);
 }
 body[data-role="jlp"] .header-icon-box{background:var(--jlp);}
+
+/* ---------- Autocomplete (ketik + cari): Customer, Nama Barang ---------- */
+.autocomplete-wrap{position:relative;}
+.autocomplete-wrap input{
+  width:100%;padding:10px 12px;background:var(--panel-2);
+  border:1px solid var(--border);border-radius:8px;color:var(--text);
+  font-size:14px;font-family:inherit;
+}
+.autocomplete-wrap input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(22,163,74,0.12);}
+.autocomplete-wrap input.invalid-select{border-color:var(--danger);background:rgba(220,38,38,0.05);}
+.item-table-wrap .autocomplete-wrap input, table td .autocomplete-wrap input{
+  min-height:42px;padding:9px 11px;font-size:13.5px;color:var(--text-dim);
+}
+.suggest-list{
+  position:absolute;top:100%;left:0;right:0;
+  background:var(--panel);border:1px solid var(--border);border-radius:8px;
+  margin-top:4px;max-height:200px;overflow-y:auto;
+  box-shadow:0 8px 24px rgba(24,36,32,0.14);
+  z-index:60;display:none;text-align:left;
+}
+.suggest-list.show{display:block;}
+.suggest-item{padding:9px 12px;font-size:13px;cursor:pointer;color:var(--text);}
+.suggest-item:hover,.suggest-item.active{background:var(--panel-2);}
+.suggest-empty{padding:9px 12px;font-size:12px;color:var(--text-dim);font-style:italic;}
+
+/* ---------- Input dengan tombol icon di sampingnya (mis. salin No. SO) ---------- */
+.input-with-btn{display:flex;gap:8px;align-items:center;}
+.input-with-btn input{flex:1;min-width:0;}
+.icon-btn{
+  flex-shrink:0;width:41px;height:41px;border-radius:8px;
+  border:1px solid var(--border);background:var(--panel-2);color:var(--text-dim);
+  display:flex;align-items:center;justify-content:center;cursor:pointer;
+}
+.icon-btn:hover{background:#E7EEE9;color:var(--accent);}
+
+/* ---------- Mode kartu untuk tabel entri data di layar sempit (HP) ---------- */
+@media (max-width:700px){
+  .item-table-wrap table, .table-bordered-wrap table{min-width:0;}
+  .item-table-wrap thead, .table-bordered-wrap thead{display:none;}
+  .item-table-wrap table, .item-table-wrap tbody, .item-table-wrap tr, .item-table-wrap td,
+  .table-bordered-wrap table, .table-bordered-wrap tbody, .table-bordered-wrap tr, .table-bordered-wrap td{
+    display:block; width:100%;
+  }
+  .item-table-wrap, .table-bordered-wrap{border:none;background:transparent;}
+  .item-table-wrap tr, .table-bordered-wrap tr{
+    background:var(--panel);
+    border:1px solid var(--border); border-radius:10px;
+    padding:12px 12px 8px; margin-bottom:12px; position:relative;
+  }
+  .item-table-wrap td, .table-bordered-wrap td{
+    border-bottom:none; padding:6px 0; text-align:left;
+  }
+  .item-table-wrap td[data-label]::before, .table-bordered-wrap td[data-label]::before{
+    content:attr(data-label);
+    display:block; font-size:10px; font-weight:700; color:var(--text-dim);
+    text-transform:uppercase; letter-spacing:0.4px; margin-bottom:4px;
+  }
+  .item-table-wrap td:first-child, .table-bordered-wrap td:first-child{display:none;}
+  .item-table-wrap td:last-child, .table-bordered-wrap td:last-child{
+    position:absolute; top:10px; right:10px; width:auto; padding:0;
+  }
+  .topline{position:static;}
+}
