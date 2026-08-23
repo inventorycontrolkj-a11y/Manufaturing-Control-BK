@@ -358,6 +358,9 @@ function buildAutocomplete(getNames, placeholder, onPick) {
   listBox.className = "suggest-list suggest-list-portal";
   document.body.appendChild(listBox);
 
+  let currentMatches = [];
+  let activeIndex = -1;
+
   function positionList() {
     const r = input.getBoundingClientRect();
     listBox.style.left = r.left + "px";
@@ -365,26 +368,36 @@ function buildAutocomplete(getNames, placeholder, onPick) {
     listBox.style.width = r.width + "px";
   }
 
+  function pick(n) {
+    input.value = n;
+    input.classList.remove("invalid-select");
+    listBox.classList.remove("show");
+    if (onPick) onPick(n);
+  }
+
+  function highlight(index) {
+    activeIndex = index;
+    [...listBox.querySelectorAll(".suggest-item")].forEach((el, i) => {
+      el.classList.toggle("active", i === activeIndex);
+      if (i === activeIndex) el.scrollIntoView({ block: "nearest" });
+    });
+  }
+
   function showSuggestions() {
     positionList();
     const names = getNames() || [];
     const keyword = input.value.trim().toLowerCase();
-    const matches = names.filter(n => n.toLowerCase().includes(keyword));
+    currentMatches = names.filter(n => n.toLowerCase().includes(keyword)).slice(0, 50);
+    activeIndex = -1;
     listBox.innerHTML = "";
-    if (!matches.length) {
+    if (!currentMatches.length) {
       listBox.innerHTML = `<div class="suggest-empty">Tidak ditemukan</div>`;
     } else {
-      matches.slice(0, 50).forEach(n => {
+      currentMatches.forEach(n => {
         const item = document.createElement("div");
         item.className = "suggest-item";
         item.textContent = n;
-        item.addEventListener("mousedown", (e) => {
-          e.preventDefault();
-          input.value = n;
-          input.classList.remove("invalid-select");
-          listBox.classList.remove("show");
-          if (onPick) onPick(n);
-        });
+        item.addEventListener("mousedown", (e) => { e.preventDefault(); pick(n); });
         listBox.appendChild(item);
       });
     }
@@ -393,6 +406,23 @@ function buildAutocomplete(getNames, placeholder, onPick) {
 
   input.addEventListener("input", () => { input.classList.remove("invalid-select"); showSuggestions(); });
   input.addEventListener("focus", showSuggestions);
+  input.addEventListener("keydown", (e) => {
+    if (!listBox.classList.contains("show") || !currentMatches.length) return;
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      highlight(Math.min(activeIndex + 1, currentMatches.length - 1));
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      highlight(Math.max(activeIndex - 1, 0));
+    } else if (e.key === "Enter") {
+      if (activeIndex >= 0) {
+        e.preventDefault();
+        pick(currentMatches[activeIndex]);
+      }
+    } else if (e.key === "Escape") {
+      listBox.classList.remove("show");
+    }
+  });
   input.addEventListener("blur", () => {
     setTimeout(() => {
       listBox.classList.remove("show");
@@ -405,8 +435,13 @@ function buildAutocomplete(getNames, placeholder, onPick) {
       if (onPick) onPick(input.value);
     }, 150);
   });
-  // Sembunyikan kalau halaman di-scroll (posisi kotak saran jadi tidak akurat lagi)
-  window.addEventListener("scroll", () => listBox.classList.remove("show"), true);
+  // Sembunyikan kalau HALAMAN yang di-scroll (posisi kotak saran jadi tidak
+  // akurat lagi) — tapi biarkan scroll DI DALAM kotak saran itu sendiri jalan
+  // normal (sebelumnya ini yang bikin scroll di kotak saran malah menutupnya).
+  window.addEventListener("scroll", (e) => {
+    if (listBox.contains(e.target)) return;
+    listBox.classList.remove("show");
+  }, true);
 
   return {
     wrap, input,
