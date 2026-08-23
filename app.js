@@ -335,26 +335,25 @@ function populateMasterSelect(selectEl, masterKey, placeholder) {
 }
 
 // ---------------------------------------------------------------
-// Field ketik + cari (autocomplete) dari salah satu daftar data master.
-// Beda dengan populateMasterSelect: ini <input type=text> dengan daftar saran,
-// tervalidasi saat blur (dikosongkan + ditandai merah kalau tidak cocok persis).
+// Field ketik + cari (autocomplete). BEDA dari versi sebelumnya: fungsi ini
+// TIDAK bikin sambungan Firestore sendiri — dikasih getNames() (fungsi yang
+// mengembalikan daftar nama TERKINI) supaya banyak field bisa berbagi SATU
+// sambungan data yang sudah dimuat sejak halaman dibuka. Ini menghindari
+// bug "saran kadang muncul kadang tidak" yang terjadi kalau tiap baris tabel
+// bikin sambungannya sendiri-sendiri (baris baru = sambungan baru = ada jeda
+// sebelum datanya siap).
 // onPick(nama) dipanggil saat user memilih salah satu saran dari daftar.
 // ---------------------------------------------------------------
-function buildAutocomplete(masterKey, placeholder, onPick) {
-  const { collection: colName } = MASTER_LISTS[masterKey];
+function buildAutocomplete(getNames, placeholder, onPick) {
   const wrap = document.createElement("div");
   wrap.className = "autocomplete-wrap";
   wrap.innerHTML = `<input type="text" autocomplete="off" placeholder="${placeholder}">
     <div class="suggest-list"></div>`;
   const input = wrap.querySelector("input");
   const listBox = wrap.querySelector(".suggest-list");
-  let names = [];
-
-  listenCollection(colName, [orderBy("nama")], (rows) => {
-    names = [...new Set(rows.map(r => r.nama).filter(Boolean))];
-  });
 
   function showSuggestions() {
+    const names = getNames() || [];
     const keyword = input.value.trim().toLowerCase();
     const matches = names.filter(n => n.toLowerCase().includes(keyword));
     listBox.innerHTML = "";
@@ -384,6 +383,7 @@ function buildAutocomplete(masterKey, placeholder, onPick) {
     setTimeout(() => {
       listBox.classList.remove("show");
       const val = input.value.trim();
+      const names = getNames() || [];
       if (val && !names.includes(val)) {
         input.value = "";
         input.classList.add("invalid-select");
@@ -1175,10 +1175,19 @@ function renderInputSO(main) {
   c.appendChild(infoForm);
   c.appendChild(Object.assign(document.createElement("hr"), { className: "divider" }));
   populateMasterSelect(infoForm.sales, "sales", "Pilih sales...");
-  const { wrap: customerWrap, input: customerInput } = buildAutocomplete("customer", "Ketik nama customer...", null);
+
+  // --- daftar nama customer & barang, dimuat SEKALI di sini dan dipakai
+  // bareng-bareng semua field autocomplete di halaman ini (termasuk baris
+  // barang yang ditambah belakangan) — supaya tidak ada jeda "saran kosong"
+  // tiap kali baris baru dibuat.
+  let customerNames = [];
+  listenCollection(MASTER_LISTS.customer.collection, [orderBy("nama")], (rows) => {
+    customerNames = [...new Set(rows.map(r => r.nama).filter(Boolean))];
+  });
+  const { wrap: customerWrap, input: customerInput } = buildAutocomplete(() => customerNames, "Ketik nama customer...", null);
   infoForm.querySelector("#customer-field").appendChild(customerWrap);
 
-  // --- lookup harga & berat dari data master barang ---
+  // --- lookup harga & berat dari data master barang (juga sumber saran Nama Barang) ---
   let barangMap = {};
   listenCollection("masterBarang", [], (rows) => {
     barangMap = {};
@@ -1255,7 +1264,7 @@ function renderInputSO(main) {
       <td><button type="button" class="btn btn-danger row-del-btn" style="width:auto;padding:6px 9px;">${ICONS.trash}</button></td>
     `;
     const namaCell = tr.querySelector(".nama-barang-cell");
-    const { wrap: barangWrap, input: produkInput } = buildAutocomplete("barang", "Ketik nama barang...", () => calcRow(tr));
+    const { wrap: barangWrap, input: produkInput } = buildAutocomplete(() => Object.keys(barangMap), "Ketik nama barang...", () => calcRow(tr));
     produkInput.classList.add("barang-input-el");
     namaCell.appendChild(barangWrap);
 
