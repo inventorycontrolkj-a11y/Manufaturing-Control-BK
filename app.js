@@ -26,7 +26,7 @@ const ROLES = {
   ekspedisi:  { label: "Team Ekspedisi",  color: "--ekspedisi",
                 menu: ["input-nodo","rekap-do"] },
   admin:      { label: "Admin",           color: "--danger",
-                menu: ["manage-users","master-data"] },
+                menu: ["manage-users","master-data","input-so","rekap-so"] },
 };
 
 const VIEW_TITLES = {
@@ -45,6 +45,8 @@ const ICONS = {
   trash: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>`,
   save: `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>`,
   plus: `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>`,
+  clipboard: `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 2h6a1 1 0 0 1 1 1v2H8V3a1 1 0 0 1 1-1z"/><rect x="5" y="4" width="14" height="18" rx="2"/><line x1="9" y1="11" x2="15" y2="11"/><line x1="9" y1="15" x2="15" y2="15"/></svg>`,
+  box: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8L12 3 3 8l9 5 9-5z"/><path d="M3 8v8l9 5 9-5V8"/><path d="M12 13v8"/></svg>`,
 };
 
 // Koleksi data master & definisi kolomnya (dipakai untuk import Excel, form manual, dan tabel)
@@ -75,6 +77,11 @@ const MASTER_LISTS = {
   customer: {
     collection: "masterCustomer", label: "Nama Customer",
     namaPatterns: ["CUSTOMER", "NAMA CUSTOMER"],
+    specCols: [],
+  },
+  sales: {
+    collection: "masterSales", label: "Nama Sales",
+    namaPatterns: ["SALES", "NAMA SALES"],
     specCols: [],
   },
 };
@@ -991,42 +998,62 @@ async function nextSONumber() {
 // ---------------------------------------------------------------
 function renderInputSO(main) {
   const wrap = document.createElement("div");
+  const c = card("");
+  c.querySelector("h2").remove();
 
-  // --- banner: No. SO otomatis + tanggal ---
-  const banner = document.createElement("div");
-  banner.className = "form-banner";
-  banner.innerHTML = `
+  // --- header ikon: SALES ORDER, senada dengan Form BMB ---
+  const headerRow = document.createElement("div");
+  headerRow.className = "header-icon-row";
+  headerRow.innerHTML = `
+    <div class="header-icon-box">${ICONS.clipboard}</div>
     <div>
-      <div class="fb-title">Sales Order</div>
-      <div class="fb-sub">Input pesanan customer — nomor SO dibuat otomatis saat disimpan</div>
-    </div>
-    <div class="fb-chips">
-      <div class="banner-chip"><div class="label">No. Sales Order</div><div class="val" id="so-no">Memuat...</div></div>
-      <div class="banner-chip"><div class="label">Tanggal SO</div><div class="val" id="so-date-display">${fmtTanggalPanjang(todayStr())}</div></div>
+      <div class="header-icon-title">SALES ORDER</div>
+      <div class="header-icon-sub">Input pesanan customer</div>
     </div>
   `;
-  wrap.appendChild(banner);
-  const soNoEl = banner.querySelector("#so-no");
-  const soDateDisplay = banner.querySelector("#so-date-display");
-  nextSONumber().then(no => { soNoEl.textContent = no; })
-    .catch(err => { soNoEl.textContent = "-"; showToast("Gagal membuat No. SO: " + err.message, "err"); });
+  c.appendChild(headerRow);
 
-  // --- info utama: customer, tanggal, batas kirim ---
-  const infoCard = card("");
-  infoCard.querySelector("h2").remove();
+  const isAdmin = currentRole === "admin";
+
+  // --- header: No. Sales Order & Tanggal SO ---
+  const header = document.createElement("div");
+  header.className = "form-grid";
+  header.style.marginBottom = "18px";
+  header.innerHTML = `
+    <div class="field">
+      <label>No. Sales Order${isAdmin ? "" : " (otomatis)"}</label>
+      <input name="noSO" class="mono" value="Memuat..." ${isAdmin ? "" : "disabled"}>
+    </div>
+    <div class="field"><label>Tanggal SO</label><input name="tanggal" type="date" value="${todayStr()}" required></div>
+  `;
+  c.appendChild(header);
+  const soNoInput = header.querySelector("input[name=noSO]");
+  const tanggalSOInput = header.querySelector("input[name=tanggal]");
+  nextSONumber().then(no => { soNoInput.value = no; })
+    .catch(err => { soNoInput.value = "-"; showToast("Gagal membuat No. SO: " + err.message, "err"); });
+  if (!isAdmin) {
+    const noteEl = document.createElement("div");
+    noteEl.className = "hint";
+    noteEl.style.marginTop = "-10px";
+    noteEl.style.marginBottom = "10px";
+    noteEl.textContent = "Nomor dibuat otomatis dan hanya bisa diubah oleh Admin.";
+    header.after(noteEl);
+  }
+  c.appendChild(Object.assign(document.createElement("hr"), { className: "divider" }));
+
+  // --- info: sales, customer, batas kirim ---
   const infoForm = document.createElement("div");
   infoForm.className = "form-grid";
+  infoForm.style.marginBottom = "18px";
   infoForm.innerHTML = `
+    <div class="field"><label>Sales</label><select name="sales" required></select></div>
     <div class="field"><label>Customer</label><select name="customer" required></select></div>
-    <div class="field"><label>Tanggal SO</label><input name="tanggal" type="date" value="${todayStr()}" required></div>
     <div class="field"><label>Batas Kirim (opsional)</label><input name="batasKirim" type="date"></div>
   `;
-  infoCard.appendChild(infoForm);
-  wrap.appendChild(infoCard);
+  c.appendChild(infoForm);
+  c.appendChild(Object.assign(document.createElement("hr"), { className: "divider" }));
+  populateMasterSelect(infoForm.sales, "sales", "Pilih sales...");
   populateMasterSelect(infoForm.customer, "customer", "Pilih customer...");
-  infoForm.tanggal.addEventListener("change", () => {
-    soDateDisplay.textContent = fmtTanggalPanjang(infoForm.tanggal.value);
-  });
 
   // --- lookup harga & berat dari data master barang ---
   let barangMap = {};
@@ -1036,20 +1063,18 @@ function renderInputSO(main) {
   });
 
   // --- tabel daftar barang ---
-  const itemCard = card("");
-  itemCard.querySelector("h2").remove();
   const toolbar = document.createElement("div");
   toolbar.className = "item-toolbar";
-  toolbar.innerHTML = `<h2 style="margin:0;text-transform:none;font-size:15px;color:var(--text);">📦 Daftar Barang</h2>`;
+  toolbar.innerHTML = `<h2 style="margin:0;text-transform:none;font-size:15px;color:var(--text);">${ICONS.box} Daftar Barang</h2>`;
   const addRowBtn = document.createElement("button");
   addRowBtn.type = "button";
-  addRowBtn.className = "btn btn-primary btn-add-row";
-  addRowBtn.textContent = "+ Tambah Barang";
+  addRowBtn.className = "btn btn-outline-accent btn-add-row";
+  addRowBtn.innerHTML = `${ICONS.plus} Tambah Barang`;
   toolbar.appendChild(addRowBtn);
-  itemCard.appendChild(toolbar);
+  c.appendChild(toolbar);
 
   const tableWrap = document.createElement("div");
-  tableWrap.className = "item-table-wrap";
+  tableWrap.className = "table-bordered-wrap item-table-wrap";
   tableWrap.innerHTML = `<table>
     <thead><tr>
       <th style="width:34px;">No</th>
@@ -1064,14 +1089,15 @@ function renderInputSO(main) {
     </tr></thead>
     <tbody></tbody>
   </table>`;
-  itemCard.appendChild(tableWrap);
+  c.appendChild(tableWrap);
   const tbody = tableWrap.querySelector("tbody");
 
   const hint = document.createElement("div");
   hint.className = "hint";
-  hint.textContent = "ℹ️ Qty Bonus dihitung otomatis dari persentase bonus × qty order. Total Qty = Qty Order + Qty Bonus.";
-  itemCard.appendChild(hint);
-  wrap.appendChild(itemCard);
+  hint.style.margin = "10px 0 4px";
+  hint.textContent = "Qty Bonus dihitung otomatis dari persentase bonus × qty order. Total Qty = Qty Order + Qty Bonus.";
+  c.appendChild(hint);
+  c.appendChild(Object.assign(document.createElement("hr"), { className: "divider" }));
 
   function calcRow(tr) {
     const produk = tr.querySelector("select[name=produk]").value;
@@ -1081,7 +1107,6 @@ function renderInputSO(main) {
     const totalQty = qtyOrder + qtyBonus;
     tr.querySelector(".cell-qty-bonus").textContent = fmtNum(qtyBonus);
     tr.querySelector(".cell-total-qty").textContent = fmtNum(totalQty);
-    // auto-isi harga dari data master kalau field harga masih kosong & barang dipilih
     const hargaInput = tr.querySelector("input[name=harga]");
     if (produk && !hargaInput.dataset.touched && barangMap[produk] && barangMap[produk].harga) {
       hargaInput.value = barangMap[produk].harga;
@@ -1091,8 +1116,9 @@ function renderInputSO(main) {
 
   function addItemRow() {
     const tr = document.createElement("tr");
+    const rowNo = tbody.children.length + 1;
     tr.innerHTML = `
-      <td class="num row-index">${tbody.children.length + 1}</td>
+      <td><span class="row-num-badge">${rowNo}</span></td>
       <td><select name="produk"></select></td>
       <td><input name="harga" placeholder="opsional"></td>
       <td><input name="qtyOrder" type="number" min="0" step="any" placeholder="0"></td>
@@ -1100,7 +1126,7 @@ function renderInputSO(main) {
       <td class="num cell-qty-bonus">0</td>
       <td class="num cell-total-qty">0</td>
       <td><input name="keterangan" placeholder="Catatan (opsional)"></td>
-      <td><button type="button" class="btn btn-danger row-del-btn">✕</button></td>
+      <td><button type="button" class="btn btn-danger row-del-btn" style="width:auto;padding:6px 9px;">${ICONS.trash}</button></td>
     `;
     const select = tr.querySelector("select[name=produk]");
     populateMasterSelect(select, "barang", "Pilih barang...");
@@ -1116,7 +1142,7 @@ function renderInputSO(main) {
     tbody.appendChild(tr);
   }
   function renumberItemRows() {
-    [...tbody.children].forEach((tr, i) => { tr.querySelector(".row-index").textContent = i + 1; });
+    [...tbody.children].forEach((tr, i) => { tr.querySelector(".row-num-badge").textContent = i + 1; });
   }
   addRowBtn.addEventListener("click", addItemRow);
   addItemRow();
@@ -1124,7 +1150,7 @@ function renderInputSO(main) {
   // --- catatan + ringkasan total ---
   const bottomWrap = document.createElement("div");
   bottomWrap.className = "two-col";
-  const noteCard = card("📝 Catatan Sales Order");
+  const noteCard = card("Catatan Sales Order");
   const noteTextarea = document.createElement("textarea");
   noteTextarea.className = "textarea-note";
   noteTextarea.placeholder = "Tulis catatan tambahan untuk sales order ini (opsional)...";
@@ -1140,7 +1166,7 @@ function renderInputSO(main) {
   `;
   bottomWrap.appendChild(noteCard);
   bottomWrap.appendChild(summaryCardOuter);
-  wrap.appendChild(bottomWrap);
+  c.appendChild(bottomWrap);
 
   function updateSummary() {
     let totalItem = 0, totalQty = 0, totalTonase = 0;
@@ -1167,15 +1193,17 @@ function renderInputSO(main) {
   actions.className = "form-actions";
   actions.innerHTML = `
     <button type="button" class="btn" id="btn-reset-so">↺ Reset</button>
-    <button type="button" class="btn btn-primary" id="btn-save-so">🔒 Simpan Data</button>
+    <button type="button" class="btn btn-primary" id="btn-save-so">${ICONS.save} Simpan Data</button>
   `;
-  wrap.appendChild(actions);
+  c.appendChild(actions);
+  wrap.appendChild(c);
   main.appendChild(wrap);
 
   actions.querySelector("#btn-reset-so").addEventListener("click", () => {
     infoForm.reset();
-    infoForm.tanggal.value = todayStr();
-    soDateDisplay.textContent = fmtTanggalPanjang(todayStr());
+    tanggalSOInput.value = todayStr();
+    populateMasterSelect(infoForm.sales, "sales", "Pilih sales...");
+    populateMasterSelect(infoForm.customer, "customer", "Pilih customer...");
     tbody.innerHTML = "";
     addItemRow();
     noteTextarea.value = "";
@@ -1183,9 +1211,11 @@ function renderInputSO(main) {
   });
 
   actions.querySelector("#btn-save-so").addEventListener("click", async () => {
+    const sales = infoForm.sales.value;
     const customer = infoForm.customer.value;
-    const tanggal = infoForm.tanggal.value;
+    const tanggal = tanggalSOInput.value;
     const batasKirim = infoForm.batasKirim.value || "";
+    if (!sales) { showToast("Pilih sales dulu", "err"); return; }
     if (!customer) { showToast("Pilih customer dulu", "err"); return; }
     if (!tanggal) { showToast("Isi tanggal dulu", "err"); return; }
 
@@ -1204,11 +1234,11 @@ function renderInputSO(main) {
     if (!items.length) { showToast("Isi minimal satu barang dengan qty order", "err"); return; }
 
     const btn = actions.querySelector("#btn-save-so");
-    btn.disabled = true; btn.textContent = "Menyimpan...";
+    btn.disabled = true; btn.innerHTML = "Menyimpan...";
     try {
-      const noSO = soNoEl.textContent;
+      const noSO = soNoInput.value;
       await Promise.all(items.map(it => addDoc(collection(db, "salesOrders"), {
-        noSO, customer, tanggal, batasKirim,
+        noSO, sales, customer, tanggal, batasKirim,
         catatan: noteTextarea.value || "",
         produk: it.produk, harga: it.harga,
         qtyOrder: it.qtyOrder, bonusPct: it.bonusPct, qtyBonus: it.qtyBonus,
@@ -1218,26 +1248,18 @@ function renderInputSO(main) {
       })));
       showToast(`Sales Order ${noSO} tersimpan (${items.length} item)`);
       actions.querySelector("#btn-reset-so").click();
-      soNoEl.textContent = "Memuat...";
-      nextSONumber().then(no => { soNoEl.textContent = no; });
+      soNoInput.value = "Memuat...";
+      nextSONumber().then(no => { soNoInput.value = no; });
     } catch (err) {
       showToast(err.message, "err");
     } finally {
-      btn.disabled = false; btn.textContent = "🔒 Simpan Data";
+      btn.disabled = false; btn.innerHTML = `${ICONS.save} Simpan Data`;
     }
   });
 }
 
-function fmtTanggalPanjang(isoDate) {
-  if (!isoDate) return "-";
-  const bulan = ["Januari","Februari","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"];
-  const [y, m, d] = isoDate.split("-").map(Number);
-  if (!y || !m || !d) return isoDate;
-  return `${d} ${bulan[m - 1]} ${y}`;
-}
-
 // ---------------------------------------------------------------
-// VIEW: Rekap Sales Order (Marketing)
+// VIEW: Rekap Sales Order (Marketing / Admin)
 // ---------------------------------------------------------------
 function renderRekapSO(main) {
   const c = card("Rekap Sales Order");
@@ -1253,7 +1275,7 @@ function renderRekapSO(main) {
     holder.innerHTML = "";
     const sorted = [...soRows].sort((a, b) => (b.tanggal || "").localeCompare(a.tanggal || ""));
     holder.appendChild(makeTable(
-      ["No. SO", "Tanggal", "Customer", "Produk", "Qty Order", "Bonus %", "Total Qty", "Batas Kirim", "Status"],
+      ["No. SO", "Tanggal", "Sales", "Customer", "Produk", "Qty Order", "Bonus %", "Total Qty", "Batas Kirim", "Status"],
       sorted,
       (r) => {
         const totalKirimProduk = kirimByProduk[r.produk] || 0;
@@ -1261,7 +1283,7 @@ function renderRekapSO(main) {
           ? `<span class="badge badge-ok">Terpenuhi</span>`
           : `<span class="badge badge-wait">Diproses</span>`;
         const tr = document.createElement("tr");
-        tr.innerHTML = `<td class="mono">${r.noSO || "-"}</td><td>${r.tanggal}</td><td>${r.customer}</td><td>${r.produk}</td>
+        tr.innerHTML = `<td class="mono">${r.noSO || "-"}</td><td>${r.tanggal}</td><td>${r.sales || "-"}</td><td>${r.customer}</td><td>${r.produk}</td>
           <td class="num">${fmtNum(r.qtyOrder !== undefined ? r.qtyOrder : r.jumlah)}</td>
           <td class="num">${r.bonusPct !== undefined ? r.bonusPct + "%" : "-"}</td>
           <td class="num">${fmtNum(r.jumlah)}</td>
