@@ -47,6 +47,7 @@ const ICONS = {
   plus: `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>`,
   clipboard: `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 2h6a1 1 0 0 1 1 1v2H8V3a1 1 0 0 1 1-1z"/><rect x="5" y="4" width="14" height="18" rx="2"/><line x1="9" y1="11" x2="15" y2="11"/><line x1="9" y1="15" x2="15" y2="15"/></svg>`,
   box: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8L12 3 3 8l9 5 9-5z"/><path d="M3 8v8l9 5 9-5V8"/><path d="M12 13v8"/></svg>`,
+  copy: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`,
 };
 
 // Koleksi data master & definisi kolomnya (dipakai untuk import Excel, form manual, dan tabel)
@@ -334,6 +335,67 @@ function populateMasterSelect(selectEl, masterKey, placeholder) {
 }
 
 // ---------------------------------------------------------------
+// Field ketik + cari (autocomplete) dari salah satu daftar data master.
+// Beda dengan populateMasterSelect: ini <input type=text> dengan daftar saran,
+// tervalidasi saat blur (dikosongkan + ditandai merah kalau tidak cocok persis).
+// onPick(nama) dipanggil saat user memilih salah satu saran dari daftar.
+// ---------------------------------------------------------------
+function buildAutocomplete(masterKey, placeholder, onPick) {
+  const { collection: colName } = MASTER_LISTS[masterKey];
+  const wrap = document.createElement("div");
+  wrap.className = "autocomplete-wrap";
+  wrap.innerHTML = `<input type="text" autocomplete="off" placeholder="${placeholder}">
+    <div class="suggest-list"></div>`;
+  const input = wrap.querySelector("input");
+  const listBox = wrap.querySelector(".suggest-list");
+  let names = [];
+
+  listenCollection(colName, [orderBy("nama")], (rows) => {
+    names = [...new Set(rows.map(r => r.nama).filter(Boolean))];
+  });
+
+  function showSuggestions() {
+    const keyword = input.value.trim().toLowerCase();
+    const matches = names.filter(n => n.toLowerCase().includes(keyword));
+    listBox.innerHTML = "";
+    if (!matches.length) {
+      listBox.innerHTML = `<div class="suggest-empty">Tidak ditemukan</div>`;
+    } else {
+      matches.slice(0, 50).forEach(n => {
+        const item = document.createElement("div");
+        item.className = "suggest-item";
+        item.textContent = n;
+        item.addEventListener("mousedown", (e) => {
+          e.preventDefault();
+          input.value = n;
+          input.classList.remove("invalid-select");
+          listBox.classList.remove("show");
+          if (onPick) onPick(n);
+        });
+        listBox.appendChild(item);
+      });
+    }
+    listBox.classList.add("show");
+  }
+
+  input.addEventListener("input", () => { input.classList.remove("invalid-select"); showSuggestions(); });
+  input.addEventListener("focus", showSuggestions);
+  input.addEventListener("blur", () => {
+    setTimeout(() => {
+      listBox.classList.remove("show");
+      const val = input.value.trim();
+      if (val && !names.includes(val)) {
+        input.value = "";
+        input.classList.add("invalid-select");
+      }
+      if (onPick) onPick(input.value);
+    }, 150);
+  });
+
+  return { wrap, input };
+}
+
+// ---------------------------------------------------------------
 // Komponen UI generik
 // ---------------------------------------------------------------
 function card(title) {
@@ -466,10 +528,10 @@ function renderInputBMB(main) {
     const rowNo = tbody.children.length + 1;
     tr.innerHTML = `
       <td><span class="row-num-badge">${rowNo}</span></td>
-      <td><select name="produk" style="width:100%;"></select></td>
-      <td><input name="qty" type="number" min="0" step="any" placeholder="0" style="width:100%;"></td>
-      <td class="num cell-stok-saat-ini">-</td>
-      <td class="num cell-stok-baru">-</td>
+      <td data-label="Nama Barang"><select name="produk" style="width:100%;"></select></td>
+      <td data-label="Qty BMB"><input name="qty" type="number" min="0" step="any" placeholder="0" style="width:100%;"></td>
+      <td class="num cell-stok-saat-ini" data-label="Stock Saat Ini">-</td>
+      <td class="num cell-stok-baru" data-label="Stock + BMB">-</td>
       <td><button type="button" class="btn btn-danger" style="width:auto;padding:6px 9px;">${ICONS.trash}</button></td>
     `;
     const select = tr.querySelector("select[name=produk]");
@@ -813,10 +875,10 @@ function renderStockOpname(main) {
     const rowNo = tbody.children.length + 1;
     tr.innerHTML = `
       <td><span class="row-num-badge">${rowNo}</span></td>
-      <td><select name="produk" style="width:100%;"></select></td>
-      <td class="num cell-sistem">-</td>
-      <td><input name="fisik" type="number" min="0" step="any" placeholder="0" style="width:100%;"></td>
-      <td class="num cell-selisih">-</td>
+      <td data-label="Nama Barang"><select name="produk" style="width:100%;"></select></td>
+      <td class="num cell-sistem" data-label="Stock Sistem">-</td>
+      <td data-label="Stock Fisik"><input name="fisik" type="number" min="0" step="any" placeholder="0" style="width:100%;"></td>
+      <td class="num cell-selisih" data-label="Selisih">-</td>
       <td><button type="button" class="btn btn-danger" style="width:auto;padding:6px 9px;">${ICONS.trash}</button></td>
     `;
     const select = tr.querySelector("select[name=produk]");
@@ -1054,30 +1116,36 @@ function renderInputSO(main) {
   header.className = "form-grid";
   header.style.marginBottom = "18px";
   const tanggalSO = todayStr();
-  const batasKirim = addDays(tanggalSO, 3);
+  const batasKirim = addDays(tanggalSO, 7);
   header.innerHTML = `
     <div class="field">
       <label>No. Sales Order${isAdmin ? "" : " (otomatis)"}</label>
-      <input name="noSO" class="mono" value="Memuat..." ${isAdmin ? "" : "disabled"}>
+      <div class="input-with-btn">
+        <input name="noSO" class="mono" value="Memuat..." ${isAdmin ? "" : "disabled"}>
+        <button type="button" class="icon-btn" id="btn-copy-noso" title="Salin nomor">${ICONS.copy}</button>
+      </div>
     </div>
     <div class="field">
       <label>Tanggal SO (otomatis)</label>
       <div class="readonly-box">${fmtTanggalPanjang(tanggalSO)}</div>
     </div>
     <div class="field">
-      <label>Batas Kirim (otomatis, H+3)</label>
+      <label>Batas Kirim (otomatis, H+7)</label>
       <div class="readonly-box">${fmtTanggalPanjang(batasKirim)}</div>
     </div>
   `;
   c.appendChild(header);
   const soNoInput = header.querySelector("input[name=noSO]");
-  if (isAdmin) {
-    nextPreviewSONumber().then(n => { soNoInput.value = String(n); })
-      .catch(err => { soNoInput.value = "-"; showToast("Gagal memuat No. SO: " + err.message, "err"); });
-  } else {
-    nextSONumber().then(no => { soNoInput.value = no; })
-      .catch(err => { soNoInput.value = "-"; showToast("Gagal membuat No. SO: " + err.message, "err"); });
-  }
+  header.querySelector("#btn-copy-noso").addEventListener("click", () => {
+    navigator.clipboard.writeText(soNoInput.value)
+      .then(() => showToast("Nomor SO disalin"))
+      .catch(() => showToast("Gagal menyalin", "err"));
+  });
+  // Sekadar intip nomor berikutnya — TIDAK memakai/mengunci nomor.
+  // Nomor baru benar-benar dipakai (dan urutan bertambah) hanya saat tombol
+  // simpan diklik, supaya berpindah menu tidak membuat nomor meloncat.
+  nextPreviewSONumber().then(n => { soNoInput.value = String(n); })
+    .catch(err => { soNoInput.value = "-"; showToast("Gagal memuat No. SO: " + err.message, "err"); });
   if (!isAdmin) {
     const noteEl = document.createElement("div");
     noteEl.className = "hint";
@@ -1095,19 +1163,20 @@ function renderInputSO(main) {
   }
   c.appendChild(Object.assign(document.createElement("hr"), { className: "divider" }));
 
-  // --- info: sales, customer (pakai <form> supaya infoForm.sales / infoForm.customer bisa diakses) ---
+  // --- info: sales, customer ---
   const infoForm = document.createElement("form");
   infoForm.addEventListener("submit", (e) => e.preventDefault());
   infoForm.className = "form-grid";
   infoForm.style.marginBottom = "18px";
   infoForm.innerHTML = `
     <div class="field"><label>Sales</label><select name="sales" required></select></div>
-    <div class="field"><label>Customer</label><select name="customer" required></select></div>
+    <div class="field" id="customer-field"><label>Customer</label></div>
   `;
   c.appendChild(infoForm);
   c.appendChild(Object.assign(document.createElement("hr"), { className: "divider" }));
   populateMasterSelect(infoForm.sales, "sales", "Pilih sales...");
-  populateMasterSelect(infoForm.customer, "customer", "Pilih customer...");
+  const { wrap: customerWrap, input: customerInput } = buildAutocomplete("customer", "Ketik nama customer...", null);
+  infoForm.querySelector("#customer-field").appendChild(customerWrap);
 
   // --- lookup harga & berat dari data master barang ---
   let barangMap = {};
@@ -1149,15 +1218,20 @@ function renderInputSO(main) {
   const hint = document.createElement("div");
   hint.className = "hint";
   hint.style.margin = "10px 0 4px";
-  hint.textContent = "Qty Bonus dihitung otomatis dari persentase bonus × qty order. Total Qty = Qty Order + Qty Bonus.";
+  hint.textContent = "Qty Bonus = (persentase bonus × qty order), dibulatkan ke bawah ke kelipatan 5. Total Qty = Qty Order + Qty Bonus.";
   c.appendChild(hint);
   c.appendChild(Object.assign(document.createElement("hr"), { className: "divider" }));
 
+  function hitungQtyBonus(qtyOrder, bonusPct) {
+    const rawBonus = qtyOrder * bonusPct / 100;
+    return Math.floor(rawBonus / 5) * 5;
+  }
+
   function calcRow(tr) {
-    const produk = tr.querySelector("select[name=produk]").value;
+    const produk = tr.querySelector(".barang-input-el").value;
     const qtyOrder = Number(tr.querySelector("input[name=qtyOrder]").value) || 0;
     const bonusPct = Number(tr.querySelector("input[name=bonusPct]").value) || 0;
-    const qtyBonus = Math.round(qtyOrder * bonusPct / 100);
+    const qtyBonus = hitungQtyBonus(qtyOrder, bonusPct);
     const totalQty = qtyOrder + qtyBonus;
     tr.querySelector(".cell-qty-bonus").textContent = fmtNum(qtyBonus);
     tr.querySelector(".cell-total-qty").textContent = fmtNum(totalQty);
@@ -1171,18 +1245,20 @@ function renderInputSO(main) {
     const rowNo = tbody.children.length + 1;
     tr.innerHTML = `
       <td><span class="row-num-badge">${rowNo}</span></td>
-      <td><select name="produk"></select></td>
-      <td><input name="harga" placeholder="-" disabled></td>
-      <td><input name="qtyOrder" type="number" min="0" step="any" placeholder="0"></td>
-      <td><input name="bonusPct" type="number" min="0" step="any" placeholder="0"></td>
-      <td class="num cell-qty-bonus">0</td>
-      <td class="num cell-total-qty">0</td>
-      <td><input name="keterangan" placeholder="Catatan (opsional)"></td>
+      <td class="nama-barang-cell" data-label="Nama Barang"></td>
+      <td data-label="Harga/Pack"><input name="harga" placeholder="-" disabled></td>
+      <td data-label="Qty Order"><input name="qtyOrder" type="number" min="0" step="any" placeholder="0"></td>
+      <td data-label="Bonus (%)"><input name="bonusPct" type="number" min="0" step="any" placeholder="0"></td>
+      <td class="num cell-qty-bonus" data-label="Qty Bonus">0</td>
+      <td class="num cell-total-qty" data-label="Total Qty">0</td>
+      <td data-label="Keterangan"><input name="keterangan" placeholder="Catatan (opsional)"></td>
       <td><button type="button" class="btn btn-danger row-del-btn" style="width:auto;padding:6px 9px;">${ICONS.trash}</button></td>
     `;
-    const select = tr.querySelector("select[name=produk]");
-    populateMasterSelect(select, "barang", "Pilih barang...");
-    select.addEventListener("change", () => calcRow(tr));
+    const namaCell = tr.querySelector(".nama-barang-cell");
+    const { wrap: barangWrap, input: produkInput } = buildAutocomplete("barang", "Ketik nama barang...", () => calcRow(tr));
+    produkInput.classList.add("barang-input-el");
+    namaCell.appendChild(barangWrap);
+
     tr.querySelector("input[name=qtyOrder]").addEventListener("input", () => calcRow(tr));
     tr.querySelector("input[name=bonusPct]").addEventListener("input", () => calcRow(tr));
     tr.querySelector(".row-del-btn").addEventListener("click", () => {
@@ -1222,10 +1298,10 @@ function renderInputSO(main) {
   function updateSummary() {
     let totalItem = 0, totalQty = 0, totalTonase = 0;
     [...tbody.children].forEach(tr => {
-      const produk = tr.querySelector("select[name=produk]").value;
+      const produk = tr.querySelector(".barang-input-el").value;
       const qtyOrder = Number(tr.querySelector("input[name=qtyOrder]").value) || 0;
       const bonusPct = Number(tr.querySelector("input[name=bonusPct]").value) || 0;
-      const totalQtyRow = qtyOrder + Math.round(qtyOrder * bonusPct / 100);
+      const totalQtyRow = qtyOrder + hitungQtyBonus(qtyOrder, bonusPct);
       if (produk && qtyOrder > 0) {
         totalItem++;
         totalQty += totalQtyRow;
@@ -1253,7 +1329,8 @@ function renderInputSO(main) {
   actions.querySelector("#btn-reset-so").addEventListener("click", () => {
     infoForm.reset();
     populateMasterSelect(infoForm.sales, "sales", "Pilih sales...");
-    populateMasterSelect(infoForm.customer, "customer", "Pilih customer...");
+    customerInput.value = "";
+    customerInput.classList.remove("invalid-select");
     tbody.innerHTML = "";
     addItemRow();
     noteTextarea.value = "";
@@ -1262,10 +1339,10 @@ function renderInputSO(main) {
 
   function collectItems() {
     return [...tbody.children].map(tr => {
-      const produk = tr.querySelector("select[name=produk]").value;
+      const produk = tr.querySelector(".barang-input-el").value;
       const qtyOrder = Number(tr.querySelector("input[name=qtyOrder]").value) || 0;
       const bonusPct = Number(tr.querySelector("input[name=bonusPct]").value) || 0;
-      const qtyBonus = Math.round(qtyOrder * bonusPct / 100);
+      const qtyBonus = hitungQtyBonus(qtyOrder, bonusPct);
       return {
         produk, harga: tr.querySelector("input[name=harga]").value || "",
         qtyOrder, bonusPct, qtyBonus, totalQty: qtyOrder + qtyBonus,
@@ -1290,7 +1367,7 @@ function renderInputSO(main) {
     try {
       if (items.length) {
         const sales = infoForm.sales.value;
-        const customer = infoForm.customer.value;
+        const customer = customerInput.value;
         if (!sales) { showToast("Pilih sales dulu", "err"); btn.disabled = false; btn.innerHTML = `${ICONS.save} Simpan Perubahan`; return; }
         if (!customer) { showToast("Pilih customer dulu", "err"); btn.disabled = false; btn.innerHTML = `${ICONS.save} Simpan Perubahan`; return; }
         const noSO = String(typedNo);
@@ -1321,7 +1398,7 @@ function renderInputSO(main) {
 
   async function handleMarketingSave() {
     const sales = infoForm.sales.value;
-    const customer = infoForm.customer.value;
+    const customer = customerInput.value;
     if (!sales) { showToast("Pilih sales dulu", "err"); return; }
     if (!customer) { showToast("Pilih customer dulu", "err"); return; }
 
@@ -1331,7 +1408,9 @@ function renderInputSO(main) {
     const btn = actions.querySelector("#btn-save-so");
     btn.disabled = true; btn.innerHTML = "Menyimpan...";
     try {
-      const noSO = soNoInput.value;
+      // Nomor baru diambil & dikunci DI SINI (bukan saat halaman dibuka),
+      // supaya berpindah-pindah menu tidak menghabiskan nomor sia-sia.
+      const noSO = await nextSONumber();
       await Promise.all(items.map(it => addDoc(collection(db, "salesOrders"), {
         noSO, sales, customer, tanggal: tanggalSO, batasKirim,
         catatan: noteTextarea.value || "",
@@ -1344,7 +1423,7 @@ function renderInputSO(main) {
       showToast(`Sales Order ${noSO} tersimpan (${items.length} item)`);
       actions.querySelector("#btn-reset-so").click();
       soNoInput.value = "Memuat...";
-      nextSONumber().then(no => { soNoInput.value = no; });
+      nextPreviewSONumber().then(n => { soNoInput.value = String(n); });
     } catch (err) {
       showToast(err.message, "err");
     } finally {
