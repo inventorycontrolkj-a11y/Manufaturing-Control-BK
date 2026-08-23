@@ -440,6 +440,7 @@ body[data-role="jlp"] .header-icon-box{background:var(--jlp);}
    (left/top/width), supaya tidak ikut kepotong oleh tabel yang overflow-x:auto. */
 .suggest-list-portal{
   position:fixed; margin-top:0; z-index:200;
+  overscroll-behavior:contain; -webkit-overflow-scrolling:touch;
 }
 .suggest-item{padding:9px 12px;font-size:13px;cursor:pointer;color:var(--text);}
 .suggest-item:hover,.suggest-item.active{background:var(--panel-2);}
