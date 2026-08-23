@@ -24,7 +24,7 @@ const ROLES = {
   marketing:  { label: "Marketing",       color: "--marketing",
                 menu: ["input-so","rekap-so","sisa-barang"] },
   ekspedisi:  { label: "Team Ekspedisi",  color: "--ekspedisi",
-                menu: ["input-nodo","rekap-do"] },
+                menu: ["input-nodo","rekap-do","rekap-so"] },
   admin:      { label: "Admin",           color: "--danger",
                 menu: ["manage-users","master-data","input-so","rekap-so"] },
 };
