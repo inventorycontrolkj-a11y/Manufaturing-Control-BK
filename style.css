@@ -78,6 +78,17 @@ button{font-family:inherit;cursor:pointer;}
   font-size:14px;
 }
 .field input:focus,.field select:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(22,163,74,0.12);}
+.field input:disabled{color:var(--text-dim);cursor:not-allowed;}
+.readonly-box{
+  width:100%;
+  padding:10px 12px;
+  background:var(--panel-2);
+  border:1px solid var(--border);
+  border-radius:8px;
+  color:var(--text-dim);
+  font-size:14px;
+  box-sizing:border-box;
+}
 .btn{
   width:100%;
   padding:11px 14px;
