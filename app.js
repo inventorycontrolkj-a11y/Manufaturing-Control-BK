@@ -1142,9 +1142,7 @@ function renderInputSO(main) {
     tr.querySelector(".cell-qty-bonus").textContent = fmtNum(qtyBonus);
     tr.querySelector(".cell-total-qty").textContent = fmtNum(totalQty);
     const hargaInput = tr.querySelector("input[name=harga]");
-    if (produk && !hargaInput.dataset.touched && barangMap[produk] && barangMap[produk].harga) {
-      hargaInput.value = barangMap[produk].harga;
-    }
+    hargaInput.value = (produk && barangMap[produk] && barangMap[produk].harga) ? barangMap[produk].harga : "";
     updateSummary();
   }
 
@@ -1154,7 +1152,7 @@ function renderInputSO(main) {
     tr.innerHTML = `
       <td><span class="row-num-badge">${rowNo}</span></td>
       <td><select name="produk"></select></td>
-      <td><input name="harga" placeholder="opsional"></td>
+      <td><input name="harga" placeholder="-" disabled></td>
       <td><input name="qtyOrder" type="number" min="0" step="any" placeholder="0"></td>
       <td><input name="bonusPct" type="number" min="0" step="any" placeholder="0"></td>
       <td class="num cell-qty-bonus">0</td>
@@ -1167,7 +1165,6 @@ function renderInputSO(main) {
     select.addEventListener("change", () => calcRow(tr));
     tr.querySelector("input[name=qtyOrder]").addEventListener("input", () => calcRow(tr));
     tr.querySelector("input[name=bonusPct]").addEventListener("input", () => calcRow(tr));
-    tr.querySelector("input[name=harga]").addEventListener("input", (e) => { e.target.dataset.touched = "1"; updateSummary(); });
     tr.querySelector(".row-del-btn").addEventListener("click", () => {
       tr.remove();
       renumberItemRows();
@@ -1212,7 +1209,7 @@ function renderInputSO(main) {
       if (produk && qtyOrder > 0) {
         totalItem++;
         totalQty += totalQtyRow;
-        const berat = barangMap[produk] ? toNumberID(barangMap[produk].beratPack) : 0;
+        const berat = barangMap[produk] ? toNumberID(barangMap[produk].beratEkspedisi) : 0;
         totalTonase += berat * totalQtyRow;
       }
     });
