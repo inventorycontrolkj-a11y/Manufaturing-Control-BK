@@ -18,13 +18,13 @@ const db = getFirestore(app);
 // ---------------------------------------------------------------
 const ROLES = {
   lkj:        { label: "Pabrik LKJ",      color: "--lkj",        pabrik: "LKJ",
-                menu: ["input-bmb","rekap-bmb","input-do","rekap-do","stock-opname","riwayat-opname","sisa-so","sisa-barang"] },
+                menu: ["input-bmb","rekap-bmb","rekap-do","stock-opname","riwayat-opname","sisa-so","sisa-barang"] },
   jlp:        { label: "Pabrik JLP",      color: "--jlp",        pabrik: "JLP",
-                menu: ["input-bmb","rekap-bmb","input-do","rekap-do","stock-opname","riwayat-opname","sisa-so","sisa-barang"] },
+                menu: ["input-bmb","rekap-bmb","rekap-do","stock-opname","riwayat-opname","sisa-so","sisa-barang"] },
   marketing:  { label: "Marketing",       color: "--marketing",
                 menu: ["input-so","rekap-so","sisa-barang"] },
   ekspedisi:  { label: "Team Ekspedisi",  color: "--ekspedisi",
-                menu: ["input-nodo","rekap-do","rekap-so"] },
+                menu: ["input-do","input-nodo","rekap-do","rekap-so"] },
   admin:      { label: "Admin",           color: "--danger",
                 menu: ["manage-users","master-data","input-so","rekap-so"] },
 };
@@ -48,6 +48,7 @@ const ICONS = {
   clipboard: `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 2h6a1 1 0 0 1 1 1v2H8V3a1 1 0 0 1 1-1z"/><rect x="5" y="4" width="14" height="18" rx="2"/><line x1="9" y1="11" x2="15" y2="11"/><line x1="9" y1="15" x2="15" y2="15"/></svg>`,
   box: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8L12 3 3 8l9 5 9-5z"/><path d="M3 8v8l9 5 9-5V8"/><path d="M12 13v8"/></svg>`,
   copy: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`,
+  truck: `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="3" width="15" height="13"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>`,
 };
 
 // Koleksi data master & definisi kolomnya (dipakai untuk import Excel, form manual, dan tabel)
@@ -696,38 +697,358 @@ function renderRekapBMB(main) {
 // ---------------------------------------------------------------
 // VIEW: Input DO (LKJ / JLP)
 // ---------------------------------------------------------------
+// ---------------------------------------------------------------
+// Nomor urut "trip" DO: satu nomor dipakai bareng untuk kedua pabrik dalam
+// satu kali muat (mis. trip #001 bulan ini -> L2608001 dari LKJ,
+// J2608001 dari JLP kalau muatan itu ambil dari kedua pabrik).
+// ---------------------------------------------------------------
+async function nextDOTripPrefix() {
+  const now = new Date();
+  const prefix = String(now.getFullYear()).slice(-2) + String(now.getMonth() + 1).padStart(2, "0");
+  const counterRef = doc(db, "counters", `doTrip_${prefix}`);
+  const seq = await runTransaction(db, async (tx) => {
+    const snap = await tx.get(counterRef);
+    const next = (snap.exists() ? snap.data().seq : 0) + 1;
+    tx.set(counterRef, { seq: next, updatedAt: serverTimestamp() });
+    return next;
+  });
+  return prefix + String(seq).padStart(3, "0");
+}
+
+// ---------------------------------------------------------------
+// VIEW: Input DO (Team Ekspedisi) — satu form untuk satu kali muat truk.
+// Barang dalam satu form bisa "Ambil Dari" LKJ dan/atau JLP sekaligus;
+// otomatis dipecah jadi 2 No. DO (awalan L / J) dan stok kedua pabrik
+// kepotong sesuai baris masing-masing (lewat field "pabrik" per baris,
+// yang dipakai perhitungan Sisa Barang yang sudah ada).
+// ---------------------------------------------------------------
 function renderInputDO(main) {
-  const pabrik = ROLES[currentRole].pabrik;
-  const c = card(`Input Delivery Order — Pabrik ${pabrik}`);
-  const form = document.createElement("form");
-  form.className = "form-grid";
-  form.innerHTML = `
-    <div class="field"><label>No. DO</label><input name="noDO" required placeholder="mis. DO-0001"></div>
-    <div class="field"><label>Produk</label><select name="produk" required></select></div>
-    <div class="field"><label>Jumlah</label><input name="jumlah" type="number" min="0" step="any" required></div>
-    <div class="field"><label>Tanggal</label><input name="tanggal" type="date" value="${todayStr()}" required></div>
-    <div class="field"><label>No. Sales Order (opsional)</label><input name="salesOrderRef" placeholder="referensi SO"></div>
-    <button class="btn btn-primary" type="submit">Simpan DO</button>
+  const wrap = document.createElement("div");
+  const c = card("");
+  c.querySelector("h2").remove();
+
+  const headerRow = document.createElement("div");
+  headerRow.className = "header-icon-row";
+  headerRow.innerHTML = `
+    <div class="header-icon-box">${ICONS.truck}</div>
+    <div>
+      <div class="header-icon-title">Input DO</div>
+      <div class="header-icon-sub">Team Ekspedisi — satu kali muat truk</div>
+    </div>
   `;
-  populateMasterSelect(form.produk, "barang", "Pilih produk...");
-  form.addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const f = new FormData(form);
+  c.appendChild(headerRow);
+
+  // --- data referensi: master angkutan, master barang, sales order (live) ---
+  let angkutanRows = [], barangMap = {}, soRows = [];
+  listenCollection(MASTER_LISTS.angkutan.collection, [], (rows) => { angkutanRows = rows; });
+  listenCollection("masterBarang", [], (rows) => {
+    barangMap = {};
+    rows.forEach(r => { barangMap[r.nama] = r; });
+  });
+  listenCollection("salesOrders", [], (rows) => { soRows = rows; });
+
+  function jmlSOFor(noSO, produk) {
+    if (!noSO || !produk) return 0;
+    return soRows
+      .filter(r => r.noSO === noSO && r.produk === produk)
+      .reduce((s, r) => s + (Number(r.jumlah) || 0), 0);
+  }
+  function customerFor(noSO) {
+    const found = soRows.find(r => r.noSO === noSO);
+    return found ? found.customer : "";
+  }
+
+  // --- header: tanggal, angkutan, tujuan, no mobil ---
+  const header = document.createElement("div");
+  header.className = "form-grid";
+  header.style.marginBottom = "18px";
+  header.innerHTML = `
+    <div class="field"><label>Tanggal</label><input name="tanggal" type="date" value="${todayStr()}" required></div>
+    <div class="field" id="angkutan-field"><label>Angkutan</label></div>
+    <div class="field"><label>Tujuan</label><select name="tujuan" required disabled><option value="">Pilih angkutan dulu...</option></select></div>
+    <div class="field"><label>No. Mobil</label><input name="noMobil" placeholder="mis. B 1234 CD"></div>
+  `;
+  c.appendChild(header);
+  const tanggalInput = header.querySelector("input[name=tanggal]");
+  const tujuanSelect = header.querySelector("select[name=tujuan]");
+  const noMobilInput = header.querySelector("input[name=noMobil]");
+
+  let currentAngkutan = "", currentTujuan = "", currentHargaPerKg = 0, currentOngkosKuli = 0;
+
+  const { wrap: angkutanWrap, input: angkutanInput } = buildAutocomplete(
+    () => [...new Set(angkutanRows.map(r => r.nama).filter(Boolean))],
+    "Ketik nama angkutan...",
+    (nama) => {
+      currentAngkutan = nama;
+      const tujuanList = angkutanRows.filter(r => r.nama === nama).map(r => r.tujuan).filter(Boolean);
+      tujuanSelect.innerHTML = `<option value="" disabled selected>Pilih tujuan...</option>` +
+        tujuanList.map(t => `<option value="${t}">${t}</option>`).join("");
+      tujuanSelect.disabled = !tujuanList.length;
+      currentTujuan = ""; currentHargaPerKg = 0; currentOngkosKuli = 0;
+      updateRateDisplay();
+      updateSummary();
+    }
+  );
+  header.querySelector("#angkutan-field").appendChild(angkutanWrap);
+
+  const rateInfo = document.createElement("div");
+  rateInfo.className = "stat-grid";
+  rateInfo.style.marginBottom = "18px";
+  rateInfo.innerHTML = `
+    <div class="stat" style="--stat-color:var(--accent);"><div class="label">Harga / Kg</div><div class="value" id="disp-harga-kg">Rp 0</div></div>
+    <div class="stat" style="--stat-color:var(--marketing);"><div class="label">Ongkos Kuli</div><div class="value" id="disp-ongkos-kuli">Rp 0</div></div>
+  `;
+  c.appendChild(rateInfo);
+
+  function updateRateDisplay() {
+    rateInfo.querySelector("#disp-harga-kg").textContent = "Rp " + fmtNum(currentHargaPerKg);
+    rateInfo.querySelector("#disp-ongkos-kuli").textContent = "Rp " + fmtNum(currentOngkosKuli);
+  }
+
+  tujuanSelect.addEventListener("change", () => {
+    currentTujuan = tujuanSelect.value;
+    const match = angkutanRows.find(r => r.nama === currentAngkutan && r.tujuan === currentTujuan);
+    currentHargaPerKg = match ? toNumberID(match.harga) : 0;
+    currentOngkosKuli = match ? toNumberID(match.ongkosKuli) : 0;
+    updateRateDisplay();
+    updateSummary();
+  });
+
+  c.appendChild(Object.assign(document.createElement("hr"), { className: "divider" }));
+
+  // --- tabel barang ---
+  const toolbar = document.createElement("div");
+  toolbar.className = "item-toolbar";
+  toolbar.innerHTML = `<h2 style="margin:0;text-transform:none;font-size:15px;color:var(--text);">${ICONS.box} Daftar Barang</h2>`;
+  const addRowBtn = document.createElement("button");
+  addRowBtn.type = "button";
+  addRowBtn.className = "btn btn-outline-accent btn-add-row";
+  addRowBtn.innerHTML = `${ICONS.plus} Tambah Barang`;
+  toolbar.appendChild(addRowBtn);
+  c.appendChild(toolbar);
+
+  const tableWrap = document.createElement("div");
+  tableWrap.className = "table-bordered-wrap item-table-wrap";
+  tableWrap.innerHTML = `<table>
+    <thead><tr>
+      <th style="width:34px;">No</th>
+      <th style="min-width:110px;">No. SO</th>
+      <th style="min-width:160px;">Nama Barang</th>
+      <th style="width:110px;">Ambil Dari</th>
+      <th style="width:90px;">Jml SO</th>
+      <th style="width:90px;">Jml DO</th>
+      <th style="width:80px;">Konv.</th>
+      <th style="width:90px;">Berat (Kg)</th>
+      <th style="min-width:120px;">Keterangan</th>
+      <th style="width:40px;"></th>
+    </tr></thead>
+    <tbody></tbody>
+  </table>`;
+  c.appendChild(tableWrap);
+  const tbody = tableWrap.querySelector("tbody");
+  c.appendChild(Object.assign(document.createElement("hr"), { className: "divider" }));
+
+  function calcRow(tr) {
+    const noSO = tr.querySelector(".so-input-el").value;
+    const produk = tr.querySelector(".barang-input-el").value;
+    const jmlDO = Number(tr.querySelector("input[name=jmlDO]").value) || 0;
+    const jmlSO = jmlSOFor(noSO, produk);
+    const konv = produk && barangMap[produk] ? toNumberID(barangMap[produk].beratEkspedisi) : 0;
+    const beratKg = jmlDO * konv;
+    tr.querySelector(".cell-jml-so").textContent = (noSO && produk) ? fmtNum(jmlSO) : "-";
+    tr.querySelector(".cell-konv").textContent = produk ? fmtNum(konv) : "-";
+    tr.querySelector(".cell-berat").textContent = fmtNum(beratKg);
+    updateSummary();
+  }
+
+  function addItemRow() {
+    const tr = document.createElement("tr");
+    const rowNo = tbody.children.length + 1;
+    tr.innerHTML = `
+      <td><span class="row-num-badge">${rowNo}</span></td>
+      <td class="so-cell" data-label="No. SO"></td>
+      <td class="barang-cell" data-label="Nama Barang"></td>
+      <td data-label="Ambil Dari">
+        <select name="ambilDari">
+          <option value="LKJ">LKJ</option>
+          <option value="JLP">JLP</option>
+        </select>
+      </td>
+      <td class="num cell-jml-so" data-label="Jml SO">-</td>
+      <td data-label="Jml DO"><input name="jmlDO" type="number" min="0" step="any" placeholder="0"></td>
+      <td class="num cell-konv" data-label="Konv.">-</td>
+      <td class="num cell-berat" data-label="Berat (Kg)">0</td>
+      <td data-label="Keterangan"><input name="keterangan" placeholder="Opsional"></td>
+      <td><button type="button" class="btn btn-danger row-del-btn" style="width:auto;padding:6px 9px;">${ICONS.trash}</button></td>
+    `;
+    const soCell = tr.querySelector(".so-cell");
+    const { wrap: soWrap, input: soInput, destroy: destroySO } = buildAutocomplete(
+      () => [...new Set(soRows.map(r => r.noSO).filter(Boolean))],
+      "Ketik No. SO...",
+      () => calcRow(tr)
+    );
+    soInput.classList.add("so-input-el");
+    soCell.appendChild(soWrap);
+
+    const barangCell = tr.querySelector(".barang-cell");
+    const { wrap: barangWrap, input: produkInput, destroy: destroyBarang } = buildAutocomplete(
+      () => Object.keys(barangMap), "Ketik nama barang...", () => calcRow(tr)
+    );
+    produkInput.classList.add("barang-input-el");
+    barangCell.appendChild(barangWrap);
+
+    tr._destroyAutocomplete = () => { destroySO(); destroyBarang(); };
+
+    tr.querySelector("select[name=ambilDari]").addEventListener("change", updateSummary);
+    tr.querySelector("input[name=jmlDO]").addEventListener("input", () => calcRow(tr));
+    tr.querySelector(".row-del-btn").addEventListener("click", () => {
+      tr._destroyAutocomplete();
+      tr.remove();
+      renumberItemRows();
+      updateSummary();
+    });
+    tbody.appendChild(tr);
+  }
+  function renumberItemRows() {
+    [...tbody.children].forEach((tr, i) => { tr.querySelector(".row-num-badge").textContent = i + 1; });
+  }
+  addRowBtn.addEventListener("click", addItemRow);
+  addItemRow();
+
+  // --- ringkasan per pabrik + total ---
+  const summaryCard = document.createElement("div");
+  summaryCard.className = "card summary-panel";
+  summaryCard.style.flexDirection = "column";
+  summaryCard.style.alignItems = "stretch";
+  summaryCard.style.gap = "10px";
+  summaryCard.innerHTML = `
+    <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px;">
+      <div class="sp-item"><div class="label">LKJ — Pak / Kg</div><div class="val" id="sum-lkj" style="font-size:15px;">0 / 0</div></div>
+      <div class="sp-item"><div class="label">JLP — Pak / Kg</div><div class="val" id="sum-jlp" style="font-size:15px;">0 / 0</div></div>
+      <div class="sp-item"><div class="label">Tonase (Kg)</div><div class="val" id="sum-tonase">0</div></div>
+      <div class="sp-item"><div class="label">Total (Rp)</div><div class="val" id="sum-total">Rp 0</div></div>
+      <div class="sp-item"><div class="label">OKS (Rp)</div><div class="val" id="sum-oks">Rp 0</div></div>
+    </div>
+  `;
+  c.appendChild(summaryCard);
+
+  function updateSummary() {
+    let lkjPak = 0, lkjKg = 0, jlpPak = 0, jlpKg = 0;
+    [...tbody.children].forEach(tr => {
+      const ambilDari = tr.querySelector("select[name=ambilDari]").value;
+      const jmlDO = Number(tr.querySelector("input[name=jmlDO]").value) || 0;
+      const produk = tr.querySelector(".barang-input-el").value;
+      const konv = produk && barangMap[produk] ? toNumberID(barangMap[produk].beratEkspedisi) : 0;
+      const beratKg = jmlDO * konv;
+      if (ambilDari === "LKJ") { lkjPak += jmlDO; lkjKg += beratKg; }
+      else if (ambilDari === "JLP") { jlpPak += jmlDO; jlpKg += beratKg; }
+    });
+    const lkjRp = lkjKg * currentHargaPerKg;
+    const jlpRp = jlpKg * currentHargaPerKg;
+    const grandTotal = lkjRp + jlpRp;
+    const tonase = lkjKg + jlpKg;
+    const oks = grandTotal + currentOngkosKuli;
+    summaryCard.querySelector("#sum-lkj").textContent = `${fmtNum(lkjPak)} / ${fmtNum(lkjKg)}`;
+    summaryCard.querySelector("#sum-jlp").textContent = `${fmtNum(jlpPak)} / ${fmtNum(jlpKg)}`;
+    summaryCard.querySelector("#sum-tonase").textContent = fmtNum(Math.round(tonase * 100) / 100);
+    summaryCard.querySelector("#sum-total").textContent = "Rp " + fmtNum(Math.round(grandTotal));
+    summaryCard.querySelector("#sum-oks").textContent = "Rp " + fmtNum(Math.round(oks));
+    return { lkjPak, lkjKg, lkjRp, jlpPak, jlpKg, jlpRp, grandTotal, tonase, oks };
+  }
+  updateSummary();
+
+  // --- tombol Reset & Simpan ---
+  const actions = document.createElement("div");
+  actions.className = "form-actions";
+  actions.innerHTML = `
+    <button type="button" class="btn" id="btn-reset-do">↺ Reset</button>
+    <button type="button" class="btn btn-primary" id="btn-save-do">${ICONS.save} Simpan DO</button>
+  `;
+  c.appendChild(actions);
+  wrap.appendChild(c);
+  main.appendChild(wrap);
+
+  actions.querySelector("#btn-reset-do").addEventListener("click", () => {
+    tanggalInput.value = todayStr();
+    angkutanInput.value = ""; angkutanInput.classList.remove("invalid-select");
+    tujuanSelect.innerHTML = `<option value="">Pilih angkutan dulu...</option>`;
+    tujuanSelect.disabled = true;
+    noMobilInput.value = "";
+    currentAngkutan = ""; currentTujuan = ""; currentHargaPerKg = 0; currentOngkosKuli = 0;
+    updateRateDisplay();
+    [...tbody.children].forEach(tr => { if (tr._destroyAutocomplete) tr._destroyAutocomplete(); });
+    tbody.innerHTML = "";
+    addItemRow();
+    updateSummary();
+  });
+
+  actions.querySelector("#btn-save-do").addEventListener("click", async () => {
+    const tanggal = tanggalInput.value;
+    const angkutan = angkutanInput.value;
+    const tujuan = tujuanSelect.value;
+    const noMobil = noMobilInput.value.trim();
+    if (!tanggal) { showToast("Isi tanggal dulu", "err"); return; }
+    if (!angkutan) { showToast("Pilih angkutan dulu", "err"); return; }
+    if (!tujuan) { showToast("Pilih tujuan dulu", "err"); return; }
+
+    const items = [...tbody.children].map(tr => {
+      const noSO = tr.querySelector(".so-input-el").value;
+      const produk = tr.querySelector(".barang-input-el").value;
+      const ambilDari = tr.querySelector("select[name=ambilDari]").value;
+      const jmlDO = Number(tr.querySelector("input[name=jmlDO]").value) || 0;
+      const konv = produk && barangMap[produk] ? toNumberID(barangMap[produk].beratEkspedisi) : 0;
+      return {
+        noSO, produk, ambilDari, jmlDO,
+        jmlSO: jmlSOFor(noSO, produk), konv, beratKg: jmlDO * konv,
+        keterangan: tr.querySelector("input[name=keterangan]").value || "",
+      };
+    }).filter(it => it.produk && it.ambilDari && it.jmlDO > 0);
+
+    if (!items.length) { showToast("Isi minimal satu barang dengan Jml DO", "err"); return; }
+
+    const btn = actions.querySelector("#btn-save-do");
+    btn.disabled = true; btn.innerHTML = "Menyimpan...";
     try {
-      await addDoc(collection(db, "deliveryOrders"), {
-        pabrik, noDO: f.get("noDO").trim(), produk: f.get("produk").trim(),
-        jumlah: Number(f.get("jumlah")), tanggal: f.get("tanggal"),
-        salesOrderRef: f.get("salesOrderRef") || "",
-        shipped: false, tanggalKirim: null,
+      const summary = updateSummary();
+      const tripSeq = await nextDOTripPrefix();
+      const batchTime = Date.now();
+      const noDOFor = { LKJ: "L" + tripSeq, JLP: "J" + tripSeq };
+      const usedPabrik = [...new Set(items.map(it => it.ambilDari))];
+
+      const docs = items.map((it, idx) => ({
+        noDO: noDOFor[it.ambilDari], pabrik: it.ambilDari,
+        noSO: it.noSO, customer: customerFor(it.noSO),
+        produk: it.produk, jumlah: it.jmlDO, // "jumlah" dipakai perhitungan Sisa Barang
+        jmlSO: it.jmlSO, konv: it.konv, beratKg: Math.round(it.beratKg * 100) / 100,
+        tanggal, angkutan, tujuan, noMobil,
+        hargaPerKg: currentHargaPerKg,
+        keteranganItem: it.keterangan,
+        tripSeq, itemIndex: idx, batchTime,
+        shipped: true, tanggalKirim: tanggal, confirmedBy: currentUser.email,
+        createdBy: currentUser.email, createdAt: serverTimestamp(),
+      }));
+      await Promise.all(docs.map(d => addDoc(collection(db, "deliveryOrders"), d)));
+
+      await addDoc(collection(db, "doTrips"), {
+        tripSeq, tanggal, angkutan, tujuan, noMobil,
+        hargaPerKg: currentHargaPerKg, ongkosKuli: currentOngkosKuli,
+        totalPakLKJ: summary.lkjPak, totalKgLKJ: Math.round(summary.lkjKg * 100) / 100, totalRpLKJ: Math.round(summary.lkjRp),
+        totalPakJLP: summary.jlpPak, totalKgJLP: Math.round(summary.jlpKg * 100) / 100, totalRpJLP: Math.round(summary.jlpRp),
+        grandTotalRp: Math.round(summary.grandTotal), tonaseKg: Math.round(summary.tonase * 100) / 100,
+        oksRp: Math.round(summary.oks),
+        noDOList: usedPabrik.map(p => noDOFor[p]),
         createdBy: currentUser.email, createdAt: serverTimestamp(),
       });
-      showToast("DO tersimpan");
-      form.reset();
-      form.tanggal.value = todayStr();
-    } catch (err) { showToast(err.message, "err"); }
+
+      const noDOText = usedPabrik.map(p => noDOFor[p]).join(" & ");
+      showToast(`DO ${noDOText} tersimpan (${items.length} item)`);
+      actions.querySelector("#btn-reset-do").click();
+    } catch (err) {
+      showToast(err.message, "err");
+    } finally {
+      btn.disabled = false; btn.innerHTML = `${ICONS.save} Simpan DO`;
+    }
   });
-  c.appendChild(form);
-  main.appendChild(c);
 }
 
 // ---------------------------------------------------------------
@@ -738,6 +1059,7 @@ function renderRekapDO(main) {
   const isEkspedisi = currentRole === "ekspedisi";
   const c = card(isEkspedisi ? "Rekap Semua Delivery Order" : `Rekap DO — Pabrik ${cfg.pabrik}`);
   const holder = document.createElement("div");
+  holder.style.overflowX = "auto";
   c.appendChild(holder);
   main.appendChild(c);
 
@@ -747,21 +1069,29 @@ function renderRekapDO(main) {
 
   listenCollection("deliveryOrders", constraints, (rows) => {
     holder.innerHTML = "";
+    const sorted = [...rows].sort((a, b) => {
+      const bt = (b.batchTime || 0) - (a.batchTime || 0);
+      if (bt !== 0) return bt;
+      return (a.itemIndex || 0) - (b.itemIndex || 0);
+    });
     const headers = isEkspedisi
-      ? ["No. DO", "Pabrik", "Produk", "Jumlah", "Tanggal", "Angkutan", "Status Kirim"]
-      : ["No. DO", "Produk", "Jumlah", "Tanggal", "Ref. SO", "Status Kirim"];
-    holder.appendChild(makeTable(headers, rows, (r) => {
+      ? ["No. DO", "Pabrik", "No. SO", "Customer", "Produk", "Jml DO", "Berat (Kg)", "Tanggal", "Angkutan", "Tujuan", "Status Kirim"]
+      : ["No. DO", "No. SO", "Customer", "Produk", "Jml DO", "Berat (Kg)", "Tanggal", "Angkutan", "Tujuan", "Status Kirim"];
+    holder.appendChild(makeTable(headers, sorted, (r) => {
       const tr = document.createElement("tr");
       const statusBadge = r.shipped
         ? `<span class="badge badge-ok">Dikirim ${r.tanggalKirim || ""}</span>`
         : `<span class="badge badge-wait">Menunggu</span>`;
       if (isEkspedisi) {
-        tr.innerHTML = `<td>${r.noDO}</td><td>${r.pabrik}</td><td>${r.produk}</td>
-          <td class="num">${fmtNum(r.jumlah)}</td><td>${r.tanggal}</td><td>${r.angkutan || "-"}</td><td>${statusBadge}</td>`;
+        tr.innerHTML = `<td class="mono">${r.noDO}</td><td>${r.pabrik}</td><td class="mono">${r.noSO || r.salesOrderRef || "-"}</td>
+          <td>${r.customer || "-"}</td><td>${r.produk}</td>
+          <td class="num">${fmtNum(r.jumlah)}</td><td class="num">${r.beratKg !== undefined ? fmtNum(r.beratKg) : "-"}</td>
+          <td>${r.tanggal}</td><td>${r.angkutan || "-"}</td><td>${r.tujuan || "-"}</td><td>${statusBadge}</td>`;
       } else {
-        tr.innerHTML = `<td>${r.noDO}</td><td>${r.produk}</td>
-          <td class="num">${fmtNum(r.jumlah)}</td><td>${r.tanggal}</td>
-          <td>${r.salesOrderRef || "-"}</td><td>${statusBadge}</td>`;
+        tr.innerHTML = `<td class="mono">${r.noDO}</td><td class="mono">${r.noSO || r.salesOrderRef || "-"}</td>
+          <td>${r.customer || "-"}</td><td>${r.produk}</td>
+          <td class="num">${fmtNum(r.jumlah)}</td><td class="num">${r.beratKg !== undefined ? fmtNum(r.beratKg) : "-"}</td>
+          <td>${r.tanggal}</td><td>${r.angkutan || "-"}</td><td>${r.tujuan || "-"}</td><td>${statusBadge}</td>`;
       }
       return tr;
     }));
