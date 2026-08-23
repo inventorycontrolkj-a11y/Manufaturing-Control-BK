@@ -346,6 +346,7 @@ table td select, table td input, .item-table-wrap select, .item-table-wrap input
 table td select:focus, table td input:focus, .item-table-wrap select:focus, .item-table-wrap input:focus{
   outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(22,163,74,0.10);
 }
+table td input:disabled{background:var(--bg);color:var(--text-dim);cursor:not-allowed;}
 
 /* ---------- Ringkasan total ---------- */
 .summary-panel{
