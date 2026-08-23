@@ -1351,6 +1351,29 @@ function renderInputSO(main) {
     }).filter(it => it.produk && it.qtyOrder > 0);
   }
 
+  // Barang qty-order & qty-bonus DIPISAH jadi 2 nomor SO berurutan:
+  // - noSO (mis. 7001): baris normal, harga terisi, kolom bonus kosong.
+  // - noSO+1 (mis. 7002): baris bonus (hanya barang yang bonusnya > 0),
+  //   qty-nya = qty bonus, harga kosong, kolom bonus terisi persentasenya.
+  function buildNormalAndBonusDocs(baseNoSO, bonusNoSO, items, common) {
+    const normalDocs = items.map(it => ({
+      noSO: String(baseNoSO), ...common,
+      produk: it.produk, harga: it.harga,
+      qtyOrder: it.qtyOrder, bonusPct: "", qtyBonus: 0,
+      jumlah: it.qtyOrder, keteranganItem: it.keteranganItem,
+      rowType: "normal",
+    }));
+    const bonusItems = items.filter(it => it.qtyBonus > 0);
+    const bonusDocs = bonusItems.map(it => ({
+      noSO: String(bonusNoSO), ...common,
+      produk: it.produk, harga: "",
+      qtyOrder: it.qtyBonus, bonusPct: it.bonusPct, qtyBonus: 0,
+      jumlah: it.qtyBonus, keteranganItem: it.keteranganItem,
+      rowType: "bonus",
+    }));
+    return { normalDocs, bonusDocs };
+  }
+
   // ---- Admin: field No. Sales Order dipakai untuk MENGATUR ULANG nomor urut
   // global. Kalau tabel barang juga diisi, sekalian dibuat Sales Order-nya
   // dengan nomor itu. Kalau tabel kosong, cuma nomor urutnya yang diperbarui
@@ -1370,18 +1393,22 @@ function renderInputSO(main) {
         const customer = customerInput.value;
         if (!sales) { showToast("Pilih sales dulu", "err"); btn.disabled = false; btn.innerHTML = `${ICONS.save} Simpan Perubahan`; return; }
         if (!customer) { showToast("Pilih customer dulu", "err"); btn.disabled = false; btn.innerHTML = `${ICONS.save} Simpan Perubahan`; return; }
-        const noSO = String(typedNo);
-        await Promise.all(items.map(it => addDoc(collection(db, "salesOrders"), {
-          noSO, sales, customer, tanggal: tanggalSO, batasKirim,
+
+        const hasBonus = items.some(it => it.qtyBonus > 0);
+        const bonusNoSO = hasBonus ? typedNo + 1 : null;
+        const common = {
+          sales, customer, tanggal: tanggalSO, batasKirim,
           catatan: noteTextarea.value || "",
-          produk: it.produk, harga: it.harga,
-          qtyOrder: it.qtyOrder, bonusPct: it.bonusPct, qtyBonus: it.qtyBonus,
-          jumlah: it.totalQty,
-          keteranganItem: it.keteranganItem,
           createdBy: currentUser.email, createdAt: serverTimestamp(),
-        })));
-        await setDoc(doc(db, "counters", "salesOrderSeq"), { seq: typedNo, updatedAt: serverTimestamp() });
-        showToast(`Sales Order ${noSO} tersimpan (${items.length} item). Nomor berikutnya: ${typedNo + 1}.`);
+        };
+        const { normalDocs, bonusDocs } = buildNormalAndBonusDocs(typedNo, bonusNoSO, items, common);
+        await Promise.all([...normalDocs, ...bonusDocs].map(d => addDoc(collection(db, "salesOrders"), d)));
+        await setDoc(doc(db, "counters", "salesOrderSeq"), { seq: hasBonus ? typedNo + 1 : typedNo, updatedAt: serverTimestamp() });
+
+        const msg = hasBonus
+          ? `Sales Order ${typedNo} tersimpan (${normalDocs.length} item), bonus di No. ${bonusNoSO} (${bonusDocs.length} item).`
+          : `Sales Order ${typedNo} tersimpan (${normalDocs.length} item).`;
+        showToast(msg);
         actions.querySelector("#btn-reset-so").click();
       } else {
         await setDoc(doc(db, "counters", "salesOrderSeq"), { seq: typedNo, updatedAt: serverTimestamp() });
@@ -1411,16 +1438,23 @@ function renderInputSO(main) {
       // Nomor baru diambil & dikunci DI SINI (bukan saat halaman dibuka),
       // supaya berpindah-pindah menu tidak menghabiskan nomor sia-sia.
       const noSO = await nextSONumber();
-      await Promise.all(items.map(it => addDoc(collection(db, "salesOrders"), {
-        noSO, sales, customer, tanggal: tanggalSO, batasKirim,
+      const baseNum = Number(noSO);
+      const hasBonus = items.some(it => it.qtyBonus > 0);
+      let bonusNoSO = null;
+      if (hasBonus) bonusNoSO = await nextSONumber(); // ambil nomor berikutnya lagi khusus baris bonus
+
+      const common = {
+        sales, customer, tanggal: tanggalSO, batasKirim,
         catatan: noteTextarea.value || "",
-        produk: it.produk, harga: it.harga,
-        qtyOrder: it.qtyOrder, bonusPct: it.bonusPct, qtyBonus: it.qtyBonus,
-        jumlah: it.totalQty, // dipakai perhitungan Sisa SO / Sisa Barang
-        keteranganItem: it.keteranganItem,
         createdBy: currentUser.email, createdAt: serverTimestamp(),
-      })));
-      showToast(`Sales Order ${noSO} tersimpan (${items.length} item)`);
+      };
+      const { normalDocs, bonusDocs } = buildNormalAndBonusDocs(baseNum, bonusNoSO, items, common);
+      await Promise.all([...normalDocs, ...bonusDocs].map(d => addDoc(collection(db, "salesOrders"), d)));
+
+      const msg = hasBonus
+        ? `Sales Order ${noSO} tersimpan (${normalDocs.length} item), bonus di No. ${bonusNoSO} (${bonusDocs.length} item)`
+        : `Sales Order ${noSO} tersimpan (${normalDocs.length} item)`;
+      showToast(msg);
       actions.querySelector("#btn-reset-so").click();
       soNoInput.value = "Memuat...";
       nextPreviewSONumber().then(n => { soNoInput.value = String(n); });
@@ -1442,6 +1476,11 @@ function renderInputSO(main) {
 // ---------------------------------------------------------------
 function renderRekapSO(main) {
   const c = card("Rekap Sales Order");
+  const hint = document.createElement("div");
+  hint.className = "hint";
+  hint.style.marginBottom = "14px";
+  hint.textContent = "Barang bonus tercatat sebagai baris terpisah dengan No. SO lanjutannya (mis. 7001 = normal, 7002 = bonus dari SO yang sama).";
+  c.appendChild(hint);
   const holder = document.createElement("div");
   holder.style.overflowX = "auto";
   c.appendChild(holder);
@@ -1454,18 +1493,20 @@ function renderRekapSO(main) {
     holder.innerHTML = "";
     const sorted = [...soRows].sort((a, b) => (b.tanggal || "").localeCompare(a.tanggal || ""));
     holder.appendChild(makeTable(
-      ["No. SO", "Tanggal", "Sales", "Customer", "Produk", "Qty Order", "Bonus %", "Total Qty", "Batas Kirim", "Status"],
+      ["No. SO", "Tipe", "Tanggal", "Sales", "Customer", "Produk", "Qty", "Bonus %", "Batas Kirim", "Status"],
       sorted,
       (r) => {
         const totalKirimProduk = kirimByProduk[r.produk] || 0;
         const status = totalKirimProduk >= r.jumlah
           ? `<span class="badge badge-ok">Terpenuhi</span>`
           : `<span class="badge badge-wait">Diproses</span>`;
+        const tipeBadge = r.rowType === "bonus"
+          ? `<span class="badge badge-wait">Bonus</span>`
+          : `<span class="badge badge-ok">Normal</span>`;
         const tr = document.createElement("tr");
-        tr.innerHTML = `<td class="mono">${r.noSO || "-"}</td><td>${r.tanggal}</td><td>${r.sales || "-"}</td><td>${r.customer}</td><td>${r.produk}</td>
-          <td class="num">${fmtNum(r.qtyOrder !== undefined ? r.qtyOrder : r.jumlah)}</td>
-          <td class="num">${r.bonusPct !== undefined ? r.bonusPct + "%" : "-"}</td>
+        tr.innerHTML = `<td class="mono">${r.noSO || "-"}</td><td>${tipeBadge}</td><td>${r.tanggal}</td><td>${r.sales || "-"}</td><td>${r.customer}</td><td>${r.produk}</td>
           <td class="num">${fmtNum(r.jumlah)}</td>
+          <td class="num">${r.bonusPct !== undefined && r.bonusPct !== "" ? r.bonusPct + "%" : "-"}</td>
           <td>${r.batasKirim || "-"}</td><td>${status}</td>`;
         return tr;
       }
