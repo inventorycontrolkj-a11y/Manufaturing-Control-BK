@@ -436,6 +436,11 @@ body[data-role="jlp"] .header-icon-box{background:var(--jlp);}
   z-index:60;display:none;text-align:left;
 }
 .suggest-list.show{display:block;}
+/* Versi "portal": ditempel ke <body>, posisinya dihitung & diisi lewat JS
+   (left/top/width), supaya tidak ikut kepotong oleh tabel yang overflow-x:auto. */
+.suggest-list-portal{
+  position:fixed; margin-top:0; z-index:200;
+}
 .suggest-item{padding:9px 12px;font-size:13px;cursor:pointer;color:var(--text);}
 .suggest-item:hover,.suggest-item.active{background:var(--panel-2);}
 .suggest-empty{padding:9px 12px;font-size:12px;color:var(--text-dim);font-style:italic;}
