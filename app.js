@@ -861,6 +861,32 @@ function renderInputDO(main) {
     updateSummary();
   }
 
+  // Daftar semua barang (+ total qty) yang ada di satu No. SO tertentu,
+  // digabung dari baris normal & bonus.
+  function itemsForSO(noSO) {
+    const map = {};
+    soRows.filter(r => r.noSO === noSO).forEach(r => {
+      map[r.produk] = (map[r.produk] || 0) + (Number(r.jumlah) || 0);
+    });
+    return Object.keys(map);
+  }
+
+  // Begitu No. SO dipilih/diketik valid: isi baris ini dengan barang pertama
+  // dari SO itu, lalu OTOMATIS tambah baris baru untuk tiap barang lain di
+  // SO yang sama — supaya Ekspedisi tidak perlu ketik ulang nama barang satu-satu.
+  function handleSOPicked(tr, noSO) {
+    const produkList = itemsForSO(noSO);
+    if (!produkList.length) { calcRow(tr); return; }
+    tr.querySelector(".barang-input-el").value = produkList[0];
+    calcRow(tr);
+    for (let i = 1; i < produkList.length; i++) {
+      const newTr = addItemRow();
+      newTr.querySelector(".so-input-el").value = noSO;
+      newTr.querySelector(".barang-input-el").value = produkList[i];
+      calcRow(newTr);
+    }
+  }
+
   function addItemRow() {
     const tr = document.createElement("tr");
     const rowNo = tbody.children.length + 1;
@@ -885,7 +911,7 @@ function renderInputDO(main) {
     const { wrap: soWrap, input: soInput, destroy: destroySO } = buildAutocomplete(
       () => [...new Set(soRows.map(r => r.noSO).filter(Boolean))],
       "Ketik No. SO...",
-      () => calcRow(tr)
+      (noSO) => handleSOPicked(tr, noSO)
     );
     soInput.classList.add("so-input-el");
     soCell.appendChild(soWrap);
@@ -908,6 +934,7 @@ function renderInputDO(main) {
       updateSummary();
     });
     tbody.appendChild(tr);
+    return tr;
   }
   function renumberItemRows() {
     [...tbody.children].forEach((tr, i) => { tr.querySelector(".row-num-badge").textContent = i + 1; });
