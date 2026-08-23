@@ -1355,22 +1355,27 @@ function renderInputSO(main) {
   // - noSO (mis. 7001): baris normal, harga terisi, kolom bonus kosong.
   // - noSO+1 (mis. 7002): baris bonus (hanya barang yang bonusnya > 0),
   //   qty-nya = qty bonus, harga kosong, kolom bonus terisi persentasenya.
+  // itemIndex = urutan barang persis seperti di form, dipakai untuk mengurutkan
+  // tampilan di Rekap supaya tidak acak (semua tulisan Firestore terjadi
+  // hampir bersamaan sehingga createdAt saja tidak cukup buat mengurutkan).
   function buildNormalAndBonusDocs(baseNoSO, bonusNoSO, items, common) {
-    const normalDocs = items.map(it => ({
+    const normalDocs = items.map((it, idx) => ({
       noSO: String(baseNoSO), ...common,
       produk: it.produk, harga: it.harga,
       qtyOrder: it.qtyOrder, bonusPct: "", qtyBonus: 0,
       jumlah: it.qtyOrder, keteranganItem: it.keteranganItem,
-      rowType: "normal",
+      rowType: "normal", itemIndex: idx,
     }));
-    const bonusItems = items.filter(it => it.qtyBonus > 0);
-    const bonusDocs = bonusItems.map(it => ({
-      noSO: String(bonusNoSO), ...common,
-      produk: it.produk, harga: "",
-      qtyOrder: it.qtyBonus, bonusPct: it.bonusPct, qtyBonus: 0,
-      jumlah: it.qtyBonus, keteranganItem: it.keteranganItem,
-      rowType: "bonus",
-    }));
+    const bonusDocs = items
+      .map((it, idx) => ({ it, idx }))
+      .filter(({ it }) => it.qtyBonus > 0)
+      .map(({ it, idx }) => ({
+        noSO: String(bonusNoSO), ...common,
+        produk: it.produk, harga: "",
+        qtyOrder: it.qtyBonus, bonusPct: it.bonusPct, qtyBonus: 0,
+        jumlah: it.qtyBonus, keteranganItem: it.keteranganItem,
+        rowType: "bonus", itemIndex: idx,
+      }));
     return { normalDocs, bonusDocs };
   }
 
@@ -1399,6 +1404,7 @@ function renderInputSO(main) {
         const common = {
           sales, customer, tanggal: tanggalSO, batasKirim,
           catatan: noteTextarea.value || "",
+          batchTime: Date.now(),
           createdBy: currentUser.email, createdAt: serverTimestamp(),
         };
         const { normalDocs, bonusDocs } = buildNormalAndBonusDocs(typedNo, bonusNoSO, items, common);
@@ -1446,6 +1452,7 @@ function renderInputSO(main) {
       const common = {
         sales, customer, tanggal: tanggalSO, batasKirim,
         catatan: noteTextarea.value || "",
+        batchTime: Date.now(),
         createdBy: currentUser.email, createdAt: serverTimestamp(),
       };
       const { normalDocs, bonusDocs } = buildNormalAndBonusDocs(baseNum, bonusNoSO, items, common);
@@ -1491,7 +1498,17 @@ function renderRekapSO(main) {
     const kirimByProduk = {};
     doRows.forEach(r => { kirimByProduk[r.produk] = (kirimByProduk[r.produk] || 0) + (Number(r.jumlah) || 0); });
     holder.innerHTML = "";
-    const sorted = [...soRows].sort((a, b) => (b.tanggal || "").localeCompare(a.tanggal || ""));
+    // Urutkan: submit form paling baru di atas (pakai batchTime, bukan tanggal
+    // yang bisa sama-sama "hari ini"), lalu di dalam satu submit: baris normal
+    // dulu baru bonus, dan sesuai urutan barang persis seperti di form.
+    const sorted = [...soRows].sort((a, b) => {
+      const bt = (b.batchTime || 0) - (a.batchTime || 0);
+      if (bt !== 0) return bt;
+      const rtA = a.rowType === "bonus" ? 1 : 0;
+      const rtB = b.rowType === "bonus" ? 1 : 0;
+      if (rtA !== rtB) return rtA - rtB;
+      return (a.itemIndex || 0) - (b.itemIndex || 0);
+    });
     holder.appendChild(makeTable(
       ["No. SO", "Tipe", "Tanggal", "Sales", "Customer", "Produk", "Qty", "Bonus %", "Batas Kirim", "Status"],
       sorted,
